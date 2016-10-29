@@ -26,7 +26,7 @@ function build() {
             ]
         }))
         .pipe(sourcemaps.write("."))
-        .pipe(notify({ message: "attacker: built", onLast: true }))
+        .pipe(notify({ message: "flagger: built", onLast: true }))
         .pipe(gulp.dest("lib"));
 }
 

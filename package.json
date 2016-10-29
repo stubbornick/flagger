@@ -20,5 +20,8 @@
     "gulp-notify": "^2.2.0",
     "gulp-plumber": "^1.1.0",
     "gulp-sourcemaps": "^1.6.0"
+  },
+  "dependencies": {
+    "dateformat": "^1.0.12"
   }
 }

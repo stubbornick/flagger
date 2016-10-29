@@ -4,7 +4,9 @@
   "description": "Flag sender",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node lib/index.js",
+    "emulator": "node lib/ideal_receiver.js",
+    "generator": "node lib/flags_generator.js",
     "build": "gulp build",
     "watch": "gulp watch"
   },

@@ -1,8 +1,17 @@
 "use strict";
 
+import fs from "fs";
 import net from "net";
 import util from "util";
 import { RAW_SOCKET_PORT } from "./config";
+
+
+const oldlog = console.log;
+console.log = function (...args){
+    let msg = new Date().toISOString() + ": " + util.format(...args);
+    oldlog(msg);
+    fs.appendFileSync("receiver.log", msg+"\n");
+}
 
 function int_to_flag(i){
     let s = i.toString();
@@ -12,25 +21,43 @@ function int_to_flag(i){
     return s+"=";
 }
 
-let intervalID;
+let timeoutID;
+let delay = 1000;
+let rate = 10000;
 let s = new net.Socket;
+
+setInterval(() => {
+    delay = (Math.random() * rate);
+}, 1000)
 
 s.on("connect", () => {
     console.log("Connected");
 
     let i = 1;
 
-    intervalID = setInterval(() => {
-        let flag = int_to_flag(i)
-        s.write(flag+'\n');
-        console.log("Send:", flag);
-        i++;
-    }, 500);
-})
+    function next(){
+        let flags = [];
+        let to = i+Math.round(Math.random()*10);
+        for (; i<to; ++i){
+            flags.push(int_to_flag(i));
+        }
+
+        s.write(flags.join("\n")+'\n');
+        console.log(`Send ${flags.length} flags:\n${flags.join('\n')}`);
+
+        timeoutID = setTimeout(next, delay);
+    }
+
+    next();
+});
+
+s.on("data", (data) => {
+    console.log(data.toString().trim());
+});
 
 s.on("error", () => {
     // console.log("Disconnected with error");
-})
+});
 
 function connect(){
     s.connect(RAW_SOCKET_PORT, "127.0.0.1");
@@ -38,7 +65,7 @@ function connect(){
 
 s.on("close", () => {
     // console.log("Disconnected");
-    clearInterval(intervalID);
+    clearTimeout(timeoutID);
     setTimeout(connect, 1000);
 });
 

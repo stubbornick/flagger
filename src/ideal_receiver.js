@@ -2,30 +2,33 @@
 
 const net = require("net");
 const fs = require("fs");
+const util = require("util");
 
 const SERVER_HOST = "0.0.0.0";
 const SERVER_PORT = 6666;
 const FLAG_REGEXP = /\w{31}=/;
-const FLAG_LOGFILE= "flags_received.log";
+const FLAG_LOGFILE= "flags_received.txt";
 
 const not_a_flag = "Is not a flag";
 const already_sent = "Already sent";
-const good_answers = ['Accepted', 'Denied: It is your flag!', 'Denied: Too old'];
+const good_answers = ["Accepted", "Denied: It is your flag!", "Denied: Too old"];
 
-let receivedFlags = new Map;
+const oldlog = console.log;
+console.log = function (...args){
+    let msg = new Date().toISOString() + ": " + util.format(...args);
+    oldlog(msg);
+    fs.appendFileSync("receiver.log", msg+"\n");
+}
 
 class FlagReceiver extends net.Server
 {
     constructor(port, host){
         super();
 
-        this.on("connection", this.handleConnection);
+        this.received = new Map;
+        this.loadFlags();
 
-        try{
-            fs.unlinkSync(FLAG_LOGFILE);
-        } catch(e){
-            //empty
-        }
+        this.on("connection", this.handleConnection);
 
         this.listen({
             host: host,
@@ -33,6 +36,30 @@ class FlagReceiver extends net.Server
         }, () => {
             let addr = this.address();
             console.log(`Start listening on ${addr.address} ${addr.port}`);
+        });
+    }
+
+    loadFlags(){
+        this.received = new Map;
+        try{
+            fs.readFileSync(FLAG_LOGFILE).toString().split("\n").forEach((line) => {
+                if (line.length > 0){
+                    let A = line.split(" ");
+                    this.received.set(A.shift(), A.join(" "));
+                }
+            });
+        } catch(e){
+            if (e.code !== "ENOENT"){
+                throw e;
+            }
+            fs.writeFileSync(FLAG_LOGFILE, "");
+        }
+
+        fs.watch(FLAG_LOGFILE, {}, (event) => {
+            if (event !== "change"){
+                console.log(`Reload flags from '${FLAG_LOGFILE}' due to '${event}'`);
+                this.loadFlags();
+            }
         });
     }
 
@@ -45,7 +72,7 @@ class FlagReceiver extends net.Server
             console.log(`[${address}] disconnected`);
         });
 
-        let buffer = '';
+        let buffer = "";
         socket.on("data", (data) => {
             for (let char of data.toString()) {
                 if (char === '\n'){
@@ -64,11 +91,11 @@ class FlagReceiver extends net.Server
             socket.write("Goodbye!\n");
             socket.end();
         } else if (FLAG_REGEXP.test(line)) {
-            if (!receivedFlags.has(line)){
+            if (!this.received.has(line)){
                 let answer = good_answers[Math.floor(Math.random() * good_answers.length)];
                 this.answerOnInput(line, answer, socket);
-                receivedFlags.set(line, answer);
-                fs.appendFileSync(FLAG_LOGFILE, line);
+                this.received.set(line, answer);
+                fs.appendFileSync(FLAG_LOGFILE, `${line} ${answer}\n`);
             } else {
                 this.answerOnInput(line, already_sent, socket);
             }

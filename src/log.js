@@ -3,7 +3,7 @@
 import util from "util";
 import fs from "fs";
 import dateFormat from "dateformat";
-import { LOGFILE } from "./config";
+import { DEBUG_LOG, INFO_LOG } from "./config";
 
 const loglevels = {
     debug: 'DEBUG',
@@ -17,7 +17,10 @@ function printLog(level, ...args){
     let msg = util.format(...args);
     msg = util.format("%s [%s] %s", dateFormat(new Date(), "yyyy.mm.dd HH:MM:ss"), level, msg);
     console.log(msg);
-    fs.appendFileSync(LOGFILE, msg+"\n");
+    if (level !== loglevels.debug){
+        fs.appendFileSync(INFO_LOG, msg+"\n");
+    }
+    fs.appendFileSync(DEBUG_LOG, msg+"\n");
 }
 
 const log = {

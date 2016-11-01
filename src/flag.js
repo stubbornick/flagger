@@ -1,16 +1,22 @@
 "use strict";
 
+import { FLAG_REGEXP } from "./config";
 import log from "./log";
 
 class Flag
 {
-    constructor(flag, {socket} = {} ){
+    constructor(flag, {socket, status} = {} ){
         if (typeof(flag) !== 'string'){
             throw new Error(`Unknown flag type: ${typeof(flag)}`);
         }
+
+        // if (!FLAG_REGEXP.test(flag)){
+        //     throw new Error(`Flag '${flag}' don't match regexp ${FLAG_REGEXP.toString()}`);
+        // }
+
         this.flag = flag;
         this.socket = socket;
-        this._status = Flag.statuses.waiting;
+        this._status = status || Flag.statuses.waiting;
     }
 
     setStatus(newStatus){

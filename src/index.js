@@ -3,7 +3,7 @@
 import net from "net";
 import log from "./log";
 import { FLAG_REGEXP, RAW_SOCKET_HOST, RAW_SOCKET_PORT } from "./config"
-import OutputSocket from "./output";
+import Output from "./output";
 import Flag from "./flag"
 
 function fetch_all_flags(data){
@@ -23,7 +23,7 @@ function fetch_all_flags(data){
 class Flagger
 {
     constructor(){
-        this.output = new OutputSocket();
+        this.output = new Output();
         this.inputRawServer = new net.Server;
         this.globalQueue = new Array;
 
@@ -36,7 +36,7 @@ class Flagger
         });
 
         this.output.on("fail", (flags) => {
-            log.debug(`Return flags to global queue: ${flags}`);
+            log.debug(`Return ${flags.length} flags to global queue:\n${flags.join("\n")}`);
             this.globalQueue = this.globalQueue.concat(flags);
         });
 
@@ -81,7 +81,7 @@ class Flagger
         flags = flags.map((flag) => new Flag(flag, {socket:socket}));
 
         if (this.output.ready){
-            this.output.sendFlags(flags);
+            this.output.putInQueue(flags);
         } else {
             this.globalQueue = this.globalQueue.concat(flags);
         }

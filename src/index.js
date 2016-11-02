@@ -30,10 +30,30 @@ class Flagger
         this.output.on("ready", () => {
             log.debug("Output socket is ready");
             if (this.globalQueue.length > 0){
-                this.output.sendFlags(this.globalQueue);
+                this.output.putInQueue(this.globalQueue);
                 this.globalQueue = new Array;
             }
         });
+
+        this.output.on("status", (status) => {
+            if (status === "READY"){
+                log.info("OUTPUT: Connected");
+            } else if (status === "DISCONNECTED"){
+                log.info("OUTPUT: Disconnected");
+            } else if (status === "ECONNREFUSED"){
+                log.info("OUTPUT: Refused");
+            } else if (status === "ECONNRESET"){
+                log.info("OUTPUT: Reset");
+            } else if (status === "EPIPE"){
+                log.info("OUTPUT: Broken pipe");
+            } else if (status === "ETIMEDOUT"){
+                log.info("OUTPUT: Timeout");
+            } else if (status === "EHOSTUNREACH"){
+                log.info(`OUTPUT: Host ${FLAG_SERVICE_HOST} unreachable`);
+            } else {
+                log.warning(`OUTPUT: Unknown socket status: ${status}`);
+            };
+        })
 
         this.output.on("fail", (flags) => {
             log.debug(`Return ${flags.length} flags to global queue:\n${flags.join("\n")}`);
@@ -80,7 +100,7 @@ class Flagger
     newFlags(flags, socket){
         flags = flags.map((flag) => new Flag(flag, {socket:socket}));
 
-        if (this.output.ready){
+        if (this.output.status == "READY"){
             this.output.putInQueue(flags);
         } else {
             this.globalQueue = this.globalQueue.concat(flags);

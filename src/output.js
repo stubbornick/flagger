@@ -12,29 +12,18 @@ class Output extends net.Socket
         super();
         this.host = FLAG_SERVICE_HOST;
         this.port = FLAG_SERVICE_PORT;
-        this.reconnectTimeout = RECONNECT_TIMEOUT;
-        this.ready = false;
+        this.status = "NONE";
         this.queue = new Array();
         this.sentQueue = new Array();
         this.sendInterval = new Array();
         this.inputBuffer = "";
 
         this.on("error", (error) => {
-            if (error.code === "ECONNREFUSED"){
-                log.info("OUTPUT: Refused");
-            } else if (error.code === "ECONNRESET"){
-                log.info("OUTPUT: Reset");
-            } else if (error.code === "EPIPE"){
-                log.info("OUTPUT: Broken pipe");
-            } else if (error.code === "ETIMEDOUT"){
-                log.info("OUTPUT: Timeout");
-            } else if (error.code === "EHOSTUNREACH"){
-                log.info(`OUTPUT: Host ${FLAG_SERVICE_HOST} unreachable`);
+            if (error.code){
+                this._changeStatus(error.code);
             } else {
                 log.warning("OUTPUT: Unknown socket error:\n", error);
             };
-
-            this.dead();
         });
 
         this.on("close", () => {
@@ -42,18 +31,18 @@ class Output extends net.Socket
 
             setTimeout(() => {
                 this.connect();
-            }, this.reconnectTimeout);
+            }, RECONNECT_TIMEOUT);
 
-            this.dead();
+            if (this.status === "READY"){
+                this._changeStatus("DISCONNECTED");
+            }
         });
 
         this.on("connect", () => {
-            log.info("OUTPUT: Connected");
-            this.ready = true;
-            this.emit("ready");
+            this._changeStatus("READY");
 
             if (SEND_INTERVAL > 0){
-                this.sendInterval = setInterval(this.sendFlags.bind(this), SEND_INTERVAL);
+                this.sendInterval = setInterval(this._sendFlags.bind(this), SEND_INTERVAL);
             }
         });
 
@@ -83,9 +72,20 @@ class Output extends net.Socket
         this.connect();
     }
 
-    dead(){
-        this.ready = false;
+    _changeStatus(newStatus){
+        if (newStatus !== this.status){
+            this.status = newStatus;
+            this.emit("status", newStatus);
 
+            if (newStatus === "READY"){
+                this.emit("ready");
+            } else {
+                this.dead();
+            }
+        }
+    }
+
+    dead(){
         if (this.queue.length + this.sentQueue.length > 0){
             this.emit("fail", this.queue.concat(this.sentQueue));
             this.queue = new Array;
@@ -107,13 +107,14 @@ class Output extends net.Socket
         });
     }
 
-    sendFlags(){
+    _sendFlags(){
         if (this.queue.length > 0){
             this.write(this.queue.map((flag) => flag.toString()).join('\n')+'\n', "utf-8", () => {
                 this.queue.forEach((flag) => {
                     this.sentQueue.push(flag);
                     this.emit("sent", flag);
                 });
+                this.queue = new Array;
             });
         }
     }
@@ -126,8 +127,8 @@ class Output extends net.Socket
         this.queue = this.queue.concat(flags);
         // log.debug(`OUTPUT: Add ${flags.length} flags to queue:\n${flags.join("\n")}`);
 
-        if (SEND_INTERVAL == 0){
-            this.sendFlags();
+        if (SEND_INTERVAL === 0){
+            this._sendFlags();
         }
     }
 }

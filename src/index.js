@@ -4,6 +4,7 @@ import net from "net";
 import Logger from "./log";
 import config from "./config"
 import Output from "./output";
+import Database from "./database"
 import Flag from "./flag"
 
 function regexpFindAll(data, regexp){
@@ -29,8 +30,15 @@ class Flagger
         }));
 
         this.logger = options.logger || new Logger;
+        this.database = new Database(options.databaseFile, this.logger);
         this.tcpServer = new net.Server;
-        this.globalQueue = new Array;
+
+        this.database.getUnansweredFlags().then((flags) => {
+            if (flags.length > 0){
+                this.logger.debug(`Restore ${flags.length} flags from DB:\n${flags.map(flag => flag.toString()).join("\n")}`);
+                this.output.putInQueue(flags);
+            }
+        });
 
         this.output.on("ready", () => {
             this.logger.debug("Output socket is ready");
@@ -41,34 +49,36 @@ class Flagger
         });
 
         this.output.on("fail", (flags) => {
-            this.logger.debug(`Return ${flags.length} flags to global queue:\n${flags.join("\n")}`);
             this.globalQueue = this.globalQueue.concat(flags);
         });
 
         this.output.on("answer", (flag, answer) => {
             this.logger.info(`Answer: ${flag} ${answer}`);
-
-            if (flag.tcpsocket && flag.tcpsocket.writable){
-                flag.tcpsocket.write(`Answer: ${flag} ${answer}\n`);
-            }
+            flag.status = "ANSWERED";
+            flag.answer = answer;
+            flag.returnToSender(`Answer: ${flag} ${answer}`);
+            this.database.updateFlag(flag);
         });
 
         this.output.on("sent", (flag) => {
-            this.logger.debug(`Sent flag ${flag}`);
-            flag.markAsSent();
+            this.logger.debug(`Sent flag ${flag.toString()}`);
+            flag.status = "SENT";
+            this.database.updateFlag(flag);
         });
 
-        this.tcpServer.on("connection", (socket) => {
-            this.logger.debug(`${socket.localAddress}:${socket.localPort} connected to raw socket`);
+        this.tcpServer.on("connection", async (socket) => {
+            this.logger.debug(`${socket.remoteAddress}:${socket.remotePort} connected to raw socket`);
             socket.on("data", (data) => {
 
                 let flags = regexpFindAll(data.toString(), options.flagRegexp);
                 if (flags.length > 0){
                     for (let flag of flags) {
-                        this.logger.info(`New flag from ${socket.localAddress}: ${flag}`);
+                        this.logger.info(`Flag from ${socket.remoteAddress}: ${flag}`);
                     }
 
-                    this.addFlags(flags, socket);
+                    this.processFlags(flags, socket).catch((error) => {
+                        this.logger.error("Error in processFlags():", error);
+                    });
                 }
             });
         });
@@ -82,14 +92,41 @@ class Flagger
         });
     }
 
-    addFlags(flags, socket){
-        flags = flags.map((flag) => new Flag({flag: flag, tcpsocket: socket}));
+    async processFlags(flags, socket = undefined){
+        let newFlags = new Array;
+        let oldFlags = new Array;
 
-        if (this.output.status == "READY"){
-            this.output.putInQueue(flags);
-        } else {
-            this.globalQueue = this.globalQueue.concat(flags);
-        }
+        for (let flag of flags){
+            if (typeof flag === "string"){
+                const flagString = flag;
+                flag = await this.database.findFlag(flagString);
+                if (flag){
+                    flag.tcpsocket = socket;
+                    oldFlags.push(flag);
+                } else {
+                    newFlags.push(new Flag({
+                        flag: flagString,
+                        tcpsocket: socket,
+                    }));
+                }
+            }
+        };
+
+        for (let flag of oldFlags){
+            let message = `Flagger: ${flag} already in DB with status: '${flag.status}'`;
+            if (flag.answer){
+                message += `, answer: '${flag.answer}'`;
+            } else if (flag.expired){
+                message += ", expired";
+            }
+            flag.returnToSender(message);
+            this.logger.debug(`Duplicate flag: ${flag}`);
+        };
+
+        for (let flag of newFlags){
+            await this.database.addFlag(flag);
+        };
+        this.output.putInQueue(newFlags);
     }
 }
 
@@ -109,6 +146,7 @@ if (require.main === module) {
             },
             logger: new Logger(config.INFO_LOG, config.DEBUG_LOG),
             flagRegexp: config.FLAG_REGEXP,
+            databaseFile: config.FLAGS_DATABASE,
         });
     }
 

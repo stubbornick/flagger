@@ -22,6 +22,7 @@ function int_to_flag(i){
 }
 
 let timeoutID;
+let i = 1;
 let delay = 1000;
 let rate = 10000;
 let s = new net.Socket;
@@ -32,8 +33,6 @@ setInterval(() => {
 
 s.on("connect", () => {
     console.log("Connected");
-
-    let i = 1;
 
     function next(){
         let flags = [];

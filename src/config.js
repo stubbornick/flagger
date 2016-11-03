@@ -13,6 +13,9 @@ const CONFIG = {
     TCP_SOCKET_PORT: 2222,
     FLAG_REGEXP: /[a-zA-Z0-9]{31}=/g,
 
+    // Store
+    FLAGS_DATABASE: "flags.db",
+
     // Logging
     DEBUG_LOG: "debug.log",
     INFO_LOG: "info.log",

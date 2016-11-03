@@ -24,6 +24,7 @@
     "gulp-sourcemaps": "^1.6.0"
   },
   "dependencies": {
-    "dateformat": "^1.0.12"
+    "dateformat": "^1.0.12",
+    "nedb": "^1.8.0"
   }
 }

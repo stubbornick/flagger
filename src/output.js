@@ -1,10 +1,11 @@
 "use strict";
 
 import net from "net";
+import EventEmitter from "events";
 import Logger from "./log";
 
 
-class Output extends net.Socket
+class Output extends EventEmitter
 {
     constructor(options) {
         super();
@@ -16,13 +17,15 @@ class Output extends net.Socket
         this.receiverGreetings = options.receiverGreetings;
         this.logger = options.logger || new Logger;
 
+        this.socket = new net.Socket;
         this.status = "NONE";
-        this.queue = new Array();
+        this.waitingQueue = new Array();
+        this.sendingSet = new Set();
         this.sentQueue = new Array();
         this.sendTimer = null;
         this.inputBuffer = "";
 
-        this.on("error", (error) => {
+        this.socket.on("error", (error) => {
             if (error.code){
                 this._changeStatus(error.code);
             } else {
@@ -30,7 +33,7 @@ class Output extends net.Socket
             };
         });
 
-        this.on("close", () => {
+        this.socket.on("close", () => {
             this.logger.debug("OUTPUT: Connection closed");
 
             setTimeout(() => {
@@ -42,15 +45,11 @@ class Output extends net.Socket
             }
         });
 
-        this.on("connect", () => {
+        this.socket.on("connect", () => {
             this._changeStatus("READY");
-
-            if (this.sendPeriod > 0){
-                this.sendTimer = setInterval(this._sendFlags.bind(this), this.sendPeriod);
-            }
         });
 
-        this.on("data", (data) => {
+        this.socket.on("data", (data) => {
             let answers = (this.inputBuffer + data.toString()).split('\n');
             let last = answers.pop();
 
@@ -94,24 +93,35 @@ class Output extends net.Socket
             } else if (this.status === "ETIMEDOUT"){
                 this.logger.info("OUTPUT: Timeout");
             } else if (this.status === "EHOSTUNREACH"){
-                this.logger.info(`OUTPUT: Host ${FLAG_SERVICE_HOST} unreachable`);
+                this.logger.info(`OUTPUT: Host ${this.host} unreachable`);
             } else {
                 this.logger.warning(`OUTPUT: Unknown socket status: ${this.status}`);
             };
 
             if (this.status === "READY"){
-                this.emit("ready");
+                this.ready();
             } else {
                 this.dead();
             }
         }
     }
 
+    ready(){
+        this._sendFlags();
+        if (this.sendPeriod > 0){
+            this.sendTimer = setInterval(this._sendFlags.bind(this), this.sendPeriod);
+        }
+    }
+
     dead(){
-        if (this.queue.length + this.sentQueue.length > 0){
-            this.emit("fail", this.queue.concat(this.sentQueue));
-            this.queue = new Array;
+        if (this.sendingSet.size + this.sentQueue.length > 0){
+            let failed = this.sentQueue.concat(Array.from(this.sendingSet));
+
+            this.sendingSet = new Set;
             this.sentQueue = new Array;
+
+            this.logger.debug(`Return ${failed.length} flags to waitingQueue:\n${failed.join("\n")}`);
+            this.putInQueue(failed);
         }
 
         if (this.sendTimer){
@@ -123,20 +133,28 @@ class Output extends net.Socket
     connect() {
         this.logger.debug("OUTPUT: Try to connect")
 
-        super.connect({
+        this.socket.connect({
             host: this.host,
             port: this.port
         });
     }
 
     _sendFlags(){
-        if (this.queue.length > 0){
-            this.write(this.queue.map((flag) => flag.toString()).join('\n')+'\n', "utf-8", () => {
-                this.queue.forEach((flag) => {
+        if (this.waitingQueue.length > 0){
+
+            let currentPack = [];
+            this.waitingQueue = this.waitingQueue.filter((flag) => {
+                currentPack.push(flag);
+                this.sendingSet.add(flag);
+                return false;
+            });
+
+            this.socket.write(currentPack.map((flag) => flag.toString()).join('\n')+'\n', "utf-8", () => {
+                currentPack.forEach((flag) => {
                     this.sentQueue.push(flag);
+                    this.sendingSet.delete(flag);
                     this.emit("sent", flag);
                 });
-                this.queue = new Array;
             });
         }
     }
@@ -146,10 +164,10 @@ class Output extends net.Socket
             throw new Error;
         }
 
-        this.queue = this.queue.concat(flags);
-        // this.logger.debug(`OUTPUT: Add ${flags.length} flags to queue:\n${flags.join("\n")}`);
+        this.waitingQueue = this.waitingQueue.concat(flags);
+        // this.logger.debug(`OUTPUT: Add ${flags.length} flags to waitingQueue:\n${flags.join("\n")}`);
 
-        if (this.sendPeriod === 0){
+        if (this.sendPeriod === 0 && this.status === "READY"){
             this._sendFlags();
         }
     }

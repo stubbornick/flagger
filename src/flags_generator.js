@@ -3,14 +3,14 @@
 import fs from "fs";
 import net from "net";
 import util from "util";
-import { RAW_SOCKET_PORT } from "./config";
+import config from "./config";
 
 
 const oldlog = console.log;
 console.log = function (...args){
     let msg = new Date().toISOString() + ": " + util.format(...args);
     oldlog(msg);
-    fs.appendFileSync("receiver.log", msg+"\n");
+    fs.appendFileSync("generator.log", msg+"\n");
 }
 
 function int_to_flag(i){
@@ -60,7 +60,7 @@ s.on("error", () => {
 });
 
 function connect(){
-    s.connect(RAW_SOCKET_PORT, "127.0.0.1");
+    s.connect(config.TCP_SOCKET_PORT, "127.0.0.1");
 };
 
 s.on("close", () => {

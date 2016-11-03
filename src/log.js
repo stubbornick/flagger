@@ -13,20 +13,26 @@ const loglevels = {
     fatal: 'FATAL',
 }
 
-function printLog(level, ...args){
-    let msg = util.format(...args);
-    msg = util.format("%s [%s] %s", dateFormat(new Date(), "yyyy.mm.dd HH:MM:ss"), level, msg);
-    console.log(msg);
-    if (level !== loglevels.debug){
-        fs.appendFileSync(INFO_LOG, msg+"\n");
+class Logger
+{
+    constructor(infoLogFile = null, debugLogFile = null){
+        this.debugLogFile = debugLogFile;
+        this.infoLogFile = infoLogFile;
+
+        for (let level in loglevels){
+            this[level] = (...args) => this.print(loglevels[level], ...args);
+        }
     }
-    fs.appendFileSync(DEBUG_LOG, msg+"\n");
+
+    print(level, ...args){
+        let msg = util.format(...args);
+        msg = util.format("%s [%s] %s", dateFormat(new Date(), "yyyy.mm.dd HH:MM:ss"), level, msg);
+        console.log(msg);
+        if (level !== loglevels.debug){
+            fs.appendFileSync(this.infoLogFile, msg+"\n");
+        }
+        fs.appendFileSync(this.debugLogFile, msg+"\n");
+    }
 }
 
-const log = {
-    debug:   (...args) => printLog(loglevels.debug, ...args),
-    info:    (...args) => printLog(loglevels.info, ...args),
-    warning: (...args) => printLog(loglevels.warning, ...args),
-}
-
-export default log;
+export default Logger;

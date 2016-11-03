@@ -1,37 +1,41 @@
 "use strict";
 
 import net from "net";
-import { FLAG_SERVICE_HOST, FLAG_SERVICE_PORT, RECONNECT_TIMEOUT, RECEIVER_GREETINGS, SEND_INTERVAL } from "./config";
-import log from "./log";
-import Flag from "./flag";
+import Logger from "./log";
 
 
 class Output extends net.Socket
 {
-    constructor() {
+    constructor(options) {
         super();
-        this.host = FLAG_SERVICE_HOST;
-        this.port = FLAG_SERVICE_PORT;
+
+        this.host = options.host;
+        this.port = options.port;
+        this.reconnectTimeout = options.reconnectTimeout || 1000;
+        this.sendPeriod = options.sendPeriod || 0;
+        this.receiverGreetings = options.receiverGreetings;
+        this.logger = options.logger || new Logger;
+
         this.status = "NONE";
         this.queue = new Array();
         this.sentQueue = new Array();
-        this.sendInterval = new Array();
+        this.sendTimer = null;
         this.inputBuffer = "";
 
         this.on("error", (error) => {
             if (error.code){
                 this._changeStatus(error.code);
             } else {
-                log.warning("OUTPUT: Unknown socket error:\n", error);
+                this.logger.warning("OUTPUT: Unknown socket error:\n", error);
             };
         });
 
         this.on("close", () => {
-            log.debug("OUTPUT: Connection closed");
+            this.logger.debug("OUTPUT: Connection closed");
 
             setTimeout(() => {
                 this.connect();
-            }, RECONNECT_TIMEOUT);
+            }, this.reconnectTimeout);
 
             if (this.status === "READY"){
                 this._changeStatus("DISCONNECTED");
@@ -41,8 +45,8 @@ class Output extends net.Socket
         this.on("connect", () => {
             this._changeStatus("READY");
 
-            if (SEND_INTERVAL > 0){
-                this.sendInterval = setInterval(this._sendFlags.bind(this), SEND_INTERVAL);
+            if (this.sendPeriod > 0){
+                this.sendTimer = setInterval(this._sendFlags.bind(this), this.sendPeriod);
             }
         });
 
@@ -51,14 +55,14 @@ class Output extends net.Socket
             let last = answers.pop();
 
             for (let answer of answers) {
-                if (RECEIVER_GREETINGS.indexOf(answer) >= 0){
-                    log.debug("OUTPUT: Greetings skipped");
+                if (this.receiverGreetings.indexOf(answer) >= 0){
+                    this.logger.debug("OUTPUT: Greetings skipped");
                 } else if (this.sentQueue.length > 0){
-                    if (RECEIVER_GREETINGS.indexOf(answer) < 0){
+                    if (this.receiverGreetings.indexOf(answer) < 0){
                         this.emit("answer", this.sentQueue.shift(), answer);
                     }
                 } else {
-                    log.warning(`OUTPUT: Received data not related to any flag: ${data}`);
+                    this.logger.warning(`OUTPUT: Received data not related to any flag: ${data}`);
                 }
             }
 
@@ -77,7 +81,25 @@ class Output extends net.Socket
             this.status = newStatus;
             this.emit("status", newStatus);
 
-            if (newStatus === "READY"){
+            if (this.status === "READY"){
+                this.logger.info("OUTPUT: Connected");
+            } else if (this.status === "DISCONNECTED"){
+                this.logger.info("OUTPUT: Disconnected");
+            } else if (this.status === "ECONNREFUSED"){
+                this.logger.info("OUTPUT: Refused");
+            } else if (this.status === "ECONNRESET"){
+                this.logger.info("OUTPUT: Reset");
+            } else if (this.status === "EPIPE"){
+                this.logger.info("OUTPUT: Broken pipe");
+            } else if (this.status === "ETIMEDOUT"){
+                this.logger.info("OUTPUT: Timeout");
+            } else if (this.status === "EHOSTUNREACH"){
+                this.logger.info(`OUTPUT: Host ${FLAG_SERVICE_HOST} unreachable`);
+            } else {
+                this.logger.warning(`OUTPUT: Unknown socket status: ${this.status}`);
+            };
+
+            if (this.status === "READY"){
                 this.emit("ready");
             } else {
                 this.dead();
@@ -92,14 +114,14 @@ class Output extends net.Socket
             this.sentQueue = new Array;
         }
 
-        if (this.sendInterval){
-            clearInterval(this.sendInterval);
-            this.sendInterval = null;
+        if (this.sendTimer){
+            clearInterval(this.sendTimer);
+            this.sendTimer = null;
         }
     }
 
     connect() {
-        log.debug("OUTPUT: Try to connect")
+        this.logger.debug("OUTPUT: Try to connect")
 
         super.connect({
             host: this.host,
@@ -125,9 +147,9 @@ class Output extends net.Socket
         }
 
         this.queue = this.queue.concat(flags);
-        // log.debug(`OUTPUT: Add ${flags.length} flags to queue:\n${flags.join("\n")}`);
+        // this.logger.debug(`OUTPUT: Add ${flags.length} flags to queue:\n${flags.join("\n")}`);
 
-        if (SEND_INTERVAL === 0){
+        if (this.sendPeriod === 0){
             this._sendFlags();
         }
     }

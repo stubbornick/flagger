@@ -1,17 +1,17 @@
 "use strict";
 
 import net from "net";
-import log from "./log";
-import { FLAG_REGEXP, RAW_SOCKET_HOST, RAW_SOCKET_PORT } from "./config"
+import Logger from "./log";
+import config from "./config"
 import Output from "./output";
 import Flag from "./flag"
 
-function fetch_all_flags(data){
+function regexpFindAll(data, regexp){
     let flags = []
     let m;
 
     do {
-        m = FLAG_REGEXP.exec(data);
+        m = regexp.exec(data);
         if (m) {
             flags.push(m[0]);
         }
@@ -22,83 +22,68 @@ function fetch_all_flags(data){
 
 class Flagger
 {
-    constructor(){
-        this.output = new Output();
-        this.inputRawServer = new net.Server;
+    constructor(options){
+
+        this.output = new Output(Object.assign(options.output, {
+            logger: options.logger
+        }));
+
+        this.logger = options.logger || new Logger;
+        this.tcpServer = new net.Server;
         this.globalQueue = new Array;
 
         this.output.on("ready", () => {
-            log.debug("Output socket is ready");
+            this.logger.debug("Output socket is ready");
             if (this.globalQueue.length > 0){
                 this.output.putInQueue(this.globalQueue);
                 this.globalQueue = new Array;
             }
         });
 
-        this.output.on("status", (status) => {
-            if (status === "READY"){
-                log.info("OUTPUT: Connected");
-            } else if (status === "DISCONNECTED"){
-                log.info("OUTPUT: Disconnected");
-            } else if (status === "ECONNREFUSED"){
-                log.info("OUTPUT: Refused");
-            } else if (status === "ECONNRESET"){
-                log.info("OUTPUT: Reset");
-            } else if (status === "EPIPE"){
-                log.info("OUTPUT: Broken pipe");
-            } else if (status === "ETIMEDOUT"){
-                log.info("OUTPUT: Timeout");
-            } else if (status === "EHOSTUNREACH"){
-                log.info(`OUTPUT: Host ${FLAG_SERVICE_HOST} unreachable`);
-            } else {
-                log.warning(`OUTPUT: Unknown socket status: ${status}`);
-            };
-        })
-
         this.output.on("fail", (flags) => {
-            log.debug(`Return ${flags.length} flags to global queue:\n${flags.join("\n")}`);
+            this.logger.debug(`Return ${flags.length} flags to global queue:\n${flags.join("\n")}`);
             this.globalQueue = this.globalQueue.concat(flags);
         });
 
         this.output.on("answer", (flag, answer) => {
-            log.info(`Answer: ${flag} ${answer}`);
+            this.logger.info(`Answer: ${flag} ${answer}`);
 
-            if (flag.socket && flag.socket.writable){
-                flag.socket.write(`Answer: ${flag} ${answer}\n`);
+            if (flag.tcpsocket && flag.tcpsocket.writable){
+                flag.tcpsocket.write(`Answer: ${flag} ${answer}\n`);
             }
         });
 
         this.output.on("sent", (flag) => {
-            log.debug(`Sent flag ${flag}`);
-            flag.setStatus(Flag.statuses.sent);
+            this.logger.debug(`Sent flag ${flag}`);
+            flag.markAsSent();
         });
 
-        this.inputRawServer.on("connection", (socket) => {
-            log.debug(`${socket.localAddress}:${socket.localPort} connected to raw socket`);
+        this.tcpServer.on("connection", (socket) => {
+            this.logger.debug(`${socket.localAddress}:${socket.localPort} connected to raw socket`);
             socket.on("data", (data) => {
 
-                let flags = fetch_all_flags(data.toString());
+                let flags = regexpFindAll(data.toString(), options.flagRegexp);
                 if (flags.length > 0){
                     for (let flag of flags) {
-                        log.info(`New flag from ${socket.localAddress}: ${flag}`);
+                        this.logger.info(`New flag from ${socket.localAddress}: ${flag}`);
                     }
 
-                    this.newFlags(flags, socket);
+                    this.addFlags(flags, socket);
                 }
             });
         });
 
-        this.inputRawServer.listen({
-            host: RAW_SOCKET_HOST,
-            port: RAW_SOCKET_PORT,
+        this.tcpServer.listen({
+            host: options.tcpServer.host,
+            port: options.tcpServer.port,
         }, () => {
-            let addr = this.inputRawServer.address();
-            log.info(`Start listening on ${addr.address} ${addr.port}`);
+            let addr = this.tcpServer.address();
+            this.logger.info(`Start listening on ${addr.address} ${addr.port}`);
         });
     }
 
-    newFlags(flags, socket){
-        flags = flags.map((flag) => new Flag(flag, {socket:socket}));
+    addFlags(flags, socket){
+        flags = flags.map((flag) => new Flag({flag: flag, tcpsocket: socket}));
 
         if (this.output.status == "READY"){
             this.output.putInQueue(flags);
@@ -108,8 +93,24 @@ class Flagger
     }
 }
 
-async function main() {
-    new Flagger;
-}
+if (require.main === module) {
+    async function main() {
+        new Flagger({
+            output: {
+                host: config.FLAG_SERVICE_HOST,
+                port: config.FLAG_SERVICE_PORT,
+                reconnectTimeout: config.RECONNECT_TIMEOUT,
+                sendPeriod: config.SEND_PERIOD,
+                receiverGreetings: config.RECEIVER_GREETINGS,
+            },
+            tcpServer: {
+                host: config.TCP_SOCKET_HOST,
+                port: config.TCP_SOCKET_PORT,
+            },
+            logger: new Logger(config.INFO_LOG, config.DEBUG_LOG),
+            flagRegexp: config.FLAG_REGEXP,
+        });
+    }
 
-main().catch((err) => console.error(err));
+    main().catch((err) => console.error(err));
+}

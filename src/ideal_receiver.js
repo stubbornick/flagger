@@ -13,18 +13,12 @@ const not_a_flag = "Is not a flag";
 const already_sent = "Already sent";
 const good_answers = ["Accepted", "Denied: It is your flag!", "Denied: Too old"];
 
-const oldlog = console.log;
-console.log = function (...args){
-    let msg = new Date().toISOString() + ": " + util.format(...args);
-    oldlog(msg);
-    fs.appendFileSync("receiver.log", msg+"\n");
-}
-
 class FlagReceiver extends net.Server
 {
-    constructor(port, host){
+    constructor(port, host, logfile = null){
         super();
 
+        this.logfile = logfile;
         this.received = new Map;
         this.loadFlags();
 
@@ -35,7 +29,7 @@ class FlagReceiver extends net.Server
             port: port,
         }, () => {
             let addr = this.address();
-            console.log(`Start listening on ${addr.address} ${addr.port}`);
+            this.log(`Start listening on ${addr.address} ${addr.port}`);
         });
     }
 
@@ -57,7 +51,7 @@ class FlagReceiver extends net.Server
 
         fs.watch(FLAG_LOGFILE, {}, (event) => {
             if (event !== "change"){
-                console.log(`Reload flags from '${FLAG_LOGFILE}' due to '${event}'`);
+                this.log(`Reload flags from '${FLAG_LOGFILE}' due to '${event}'`);
                 this.loadFlags();
             }
         });
@@ -66,10 +60,10 @@ class FlagReceiver extends net.Server
     handleConnection(socket){
         let address = socket.localAddress;
 
-        console.log(`[${address}] connected`);
+        this.log(`[${address}] connected`);
 
         socket.on("close", () => {
-            console.log(`[${address}] disconnected`);
+            this.log(`[${address}] disconnected`);
         });
 
         let buffer = "";
@@ -87,7 +81,7 @@ class FlagReceiver extends net.Server
 
     processLine(line, socket){
         if (line.length === 0){
-            console.log(`[${socket.localAddress}] Goodbye!`);
+            this.log(`[${socket.localAddress}] Goodbye!`);
             socket.write("Goodbye!\n");
             socket.end();
         } else if (FLAG_REGEXP.test(line)) {
@@ -106,8 +100,18 @@ class FlagReceiver extends net.Server
 
     answerOnInput(input, answer, socket){
         socket.write(answer+'\n');
-        console.log(`[${socket.localAddress}] ${input} - ${answer}`);
+        this.log(`[${socket.localAddress}] ${input} - ${answer}`);
+    }
+
+    log(...args){
+        let msg = new Date().toISOString() + ": " + util.format(...args);
+        console.log(msg);
+        if (this.logfile){
+            fs.appendFileSync(this.logfile, msg+"\n");
+        }
     }
 }
 
-new FlagReceiver(SERVER_PORT, SERVER_HOST);
+if (require.main === module) {
+    new FlagReceiver(SERVER_PORT, SERVER_HOST, "receiver.log");
+}

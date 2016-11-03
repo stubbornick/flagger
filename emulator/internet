@@ -1,0 +1,10 @@
+#!/bin/bash
+
+if [[ $1 == 'bad' || $1 == 'add' ]]; then
+	command=add
+else
+	command=del
+fi
+
+#sudo tc qdisc $command dev docker0 root netem delay 5000ms 100000ms distribution normal loss 25% 50%
+sudo tc qdisc $command dev docker0 root netem delay 500ms 10000ms distribution normal loss 25% 50%

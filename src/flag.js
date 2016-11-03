@@ -5,38 +5,50 @@ import log from "./log";
 
 class Flag
 {
-    constructor(flag, {socket, status} = {} ){
-        if (typeof(flag) !== 'string'){
+    constructor(flag){
+        if (typeof flag === "string"){
+            flag = { flag: flag };
+        } else if (typeof(flag) !== 'object'){
             throw new Error(`Unknown flag type: ${typeof(flag)}`);
         }
 
-        // if (!FLAG_REGEXP.test(flag)){
-        //     throw new Error(`Flag '${flag}' don't match regexp ${FLAG_REGEXP.toString()}`);
-        // }
-
-        this.flag = flag;
-        this.socket = socket;
-        this._status = status || Flag.statuses.waiting;
+        this.flag = flag.flag;
+        this.tcpsocket = flag.tcpsocket || null;
+        this.status = flag.status || "WAITING";
+        this.expired = flag.expired || false;
+        this.answer = flag.answer || null;
     }
 
-    setStatus(newStatus){
-        this._status = newStatus;
+    markAsSent(){
+        this.status = "SENT";
     }
 
-    getStatus(){
-        return this._status;
+    toObject(){
+        return {
+            flag: this.flag,
+            status: this.status,
+            expired: this.expired,
+            answer: this.answer,
+        }
     }
 
     toString(){
         return this.flag;
     }
-}
 
-Flag.statuses = {
-    waiting: 1,
-    expired: 2,
-    sent: 2,
-    answered: 3
+    toJSON(flag){
+        return JSON.stringify({
+            flag: this.flag,
+            status: this._status
+        });
+    }
+
+    static fromJSON(json){
+        let f = JSON.parse(json);
+        new Flag(f.flag, {
+            status: f.status
+        });
+    }
 }
 
 export default Flag;

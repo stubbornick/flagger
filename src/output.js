@@ -14,8 +14,9 @@ class Output extends EventEmitter
         this.port = options.port;
         this.reconnectTimeout = options.reconnectTimeout || 1000;
         this.sendPeriod = options.sendPeriod || 0;
-        this.receiverGreetings = options.receiverGreetings;
+        this.receiverMessages = options.receiverMessages;
         this.logger = options.logger || new Logger;
+        this.maxFlagsPerSend = options.maxFlagsPerSend > 0 ? options.maxFlagsPerSend : Number.MAX_SAFE_INTEGER;
 
         this.socket = new net.Socket;
         this.status = "NONE";
@@ -34,7 +35,7 @@ class Output extends EventEmitter
         });
 
         this.socket.on("close", () => {
-            this.logger.debug("OUTPUT: Connection closed");
+            this.logger.debug("OUTPUT: Socket closed");
 
             setTimeout(() => {
                 this.connect();
@@ -54,14 +55,12 @@ class Output extends EventEmitter
             let last = answers.pop();
 
             for (let answer of answers) {
-                if (this.receiverGreetings.indexOf(answer) >= 0){
+                if (this.receiverMessages.greetings.includes(answer)){
                     this.logger.debug("OUTPUT: Greetings skipped");
                 } else if (this.sentQueue.length > 0){
-                    if (this.receiverGreetings.indexOf(answer) < 0){
-                        this.emit("answer", this.sentQueue.shift(), answer);
-                    }
+                    this.emit("answer", this.sentQueue.shift(), answer);
                 } else {
-                    this.logger.warning(`OUTPUT: Received data not related to any flag: ${data}`);
+                    this.logger.warning(`OUTPUT: Received data not related to any flag: ${answer}`);
                 }
             }
 
@@ -85,9 +84,9 @@ class Output extends EventEmitter
             } else if (this.status === "DISCONNECTED"){
                 this.logger.info("OUTPUT: Disconnected");
             } else if (this.status === "ECONNREFUSED"){
-                this.logger.info("OUTPUT: Refused");
+                this.logger.info("OUTPUT: Connection refused");
             } else if (this.status === "ECONNRESET"){
-                this.logger.info("OUTPUT: Reset");
+                this.logger.info("OUTPUT: Connection reset");
             } else if (this.status === "EPIPE"){
                 this.logger.info("OUTPUT: Broken pipe");
             } else if (this.status === "ETIMEDOUT"){
@@ -120,7 +119,7 @@ class Output extends EventEmitter
             this.sendingSet = new Set;
             this.sentQueue = new Array;
 
-            this.logger.debug(`Return ${failed.length} flags to waitingQueue:\n${failed.join("\n")}`);
+            this.logger.debug(`Return ${failed.length} flags to waitingQueue:`, failed);
             this.putInQueue(failed);
         }
 
@@ -141,13 +140,16 @@ class Output extends EventEmitter
 
     _sendFlags(){
         if (this.waitingQueue.length > 0){
+            this.logger.debug(`Trying to send ${this.waitingQueue.length} flags by ${Math.ceil(this.waitingQueue.length/this.maxFlagsPerSend)} packs:`, this.waitingQueue);
+        }
+        while (this.waitingQueue.length > 0){
 
             let currentPack = [];
-            this.waitingQueue = this.waitingQueue.filter((flag) => {
-                currentPack.push(flag);
-                this.sendingSet.add(flag);
-                return false;
-            });
+            while (currentPack.length < this.maxFlagsPerSend && this.waitingQueue.length > 0){
+                let f = this.waitingQueue.pop();
+                currentPack.push(f);
+                this.sendingSet.add(f);
+            };
 
             this.socket.write(currentPack.map((flag) => flag.toString()).join('\n')+'\n', "utf-8", () => {
                 currentPack.forEach((flag) => {
@@ -155,6 +157,7 @@ class Output extends EventEmitter
                     this.sendingSet.delete(flag);
                     this.emit("sent", flag);
                 });
+                this.logger.info(`Sent ${currentPack.length} flags:`, currentPack);
             });
         }
     }
@@ -165,7 +168,9 @@ class Output extends EventEmitter
         }
 
         this.waitingQueue = this.waitingQueue.concat(flags);
-        // this.logger.debug(`OUTPUT: Add ${flags.length} flags to waitingQueue:\n${flags.join("\n")}`);
+        this.waitingQueue.sort((a,b) => (a.priority-b.priority));
+
+        // this.logger.debug(`OUTPUT: Add ${flags.length} flags to waitingQueue:, flags);
 
         if (this.sendPeriod === 0 && this.status === "READY"){
             this._sendFlags();

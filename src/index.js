@@ -7,35 +7,27 @@ import Output from "./output";
 import Database from "./database"
 import Flag from "./flag"
 
-function regexpFindAll(data, regexp){
-    let flags = []
-    let m;
-
-    do {
-        m = regexp.exec(data);
-        if (m) {
-            flags.push(m[0]);
-        }
-    } while (m);
-
-    return flags;
-}
 
 class Flagger
 {
     constructor(options){
 
         this.output = new Output(Object.assign(options.output, {
-            logger: options.logger
+            logger: options.logger,
+            receiverMessages: options.receiverMessages
         }));
 
         this.logger = options.logger || new Logger;
-        this.database = new Database(options.databaseFile, this.logger);
+        this.database = new Database({
+            file: options.databaseFile,
+            logger: this.logger,
+            acceptedAnswer: options.receiverMessages.accepted,
+        });
         this.tcpServer = new net.Server;
 
         this.database.getUnansweredFlags().then((flags) => {
             if (flags.length > 0){
-                this.logger.debug(`Restore ${flags.length} flags from DB:\n${flags.map(flag => flag.toString()).join("\n")}`);
+                this.logger.debug(`Restore ${flags.length} unfinished flags from DB:`, flags);
                 this.output.putInQueue(flags);
             }
         });
@@ -61,24 +53,36 @@ class Flagger
         });
 
         this.output.on("sent", (flag) => {
-            this.logger.debug(`Sent flag ${flag.toString()}`);
             flag.status = "SENT";
             this.database.updateFlag(flag);
         });
 
-        this.tcpServer.on("connection", async (socket) => {
+        this.tcpServer.on("connection", (socket) => {
             this.logger.debug(`${socket.remoteAddress}:${socket.remotePort} connected to raw socket`);
             socket.on("data", (data) => {
 
-                let flags = regexpFindAll(data.toString(), options.flagRegexp);
-                if (flags.length > 0){
+                let flags = data.toString().match(options.flagRegexp);
+                if (flags){
                     for (let flag of flags) {
                         this.logger.info(`Flag from ${socket.remoteAddress}: ${flag}`);
                     }
 
                     this.processFlags(flags, socket).catch((error) => {
-                        this.logger.error("Error in processFlags():", error);
+                        this.logger.error("Error while process flags:", error);
                     });
+                }
+
+                let lines = data.toString().split("\n");
+                if (lines.includes("stats") || lines.includes("status")){
+                    socket.write(`Output status: ${this.output.status}\n`);
+                    socket.write("Database statistics:\n");
+                    this.database.getStatistics().then(dbStats => {
+                        if (socket.writable){
+                            for (let s in dbStats) {
+                                socket.write(`\t${s}: ${dbStats[s]}\n`);
+                            }
+                        }
+                    })
                 }
             });
         });
@@ -112,6 +116,8 @@ class Flagger
             }
         };
 
+        await this.database.addFlags(newFlags);
+
         for (let flag of oldFlags){
             let message = `Flagger: ${flag} already in DB with status: '${flag.status}'`;
             if (flag.answer){
@@ -123,9 +129,6 @@ class Flagger
             this.logger.debug(`Duplicate flag: ${flag}`);
         };
 
-        for (let flag of newFlags){
-            await this.database.addFlag(flag);
-        };
         this.output.putInQueue(newFlags);
     }
 }
@@ -138,8 +141,9 @@ if (require.main === module) {
                 port: config.FLAG_SERVICE_PORT,
                 reconnectTimeout: config.RECONNECT_TIMEOUT,
                 sendPeriod: config.SEND_PERIOD,
-                receiverGreetings: config.RECEIVER_GREETINGS,
+                maxFlagsPerSend: config.MAX_FLAGS_PER_SEND,
             },
+            receiverMessages: config.RECEIVER_MESAGES,
             tcpServer: {
                 host: config.TCP_SOCKET_HOST,
                 port: config.TCP_SOCKET_PORT,

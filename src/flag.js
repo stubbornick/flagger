@@ -16,6 +16,20 @@ class Flag
         this.expired = flagObj.expired || false;
         this.answer = flagObj.answer || null;
         this.date = flagObj.date || new Date();
+
+        this.calculatePriority();
+    }
+
+    calculatePriority(){
+        if (this.status === "WAITING"){
+            this.priority = 2
+        } else if (this.status === "SENT"){
+            this.priority = 1
+        } else {
+            this.priority = 0
+        }
+
+        this.priority = this.priority * this.date;
     }
 
     returnToSender(msg){

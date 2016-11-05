@@ -17,6 +17,8 @@ class Output extends EventEmitter
         this.receiverMessages = options.receiverMessages;
         this.logger = options.logger || new Logger;
         this.maxFlagsPerSend = options.maxFlagsPerSend > 0 ? options.maxFlagsPerSend : Number.MAX_SAFE_INTEGER;
+        this.lastRound = null;
+        this.flagLifetime = options.flagLifetime;
 
         this.socket = new net.Socket;
         this.status = "NONE";
@@ -75,6 +77,7 @@ class Output extends EventEmitter
     }
 
     _changeStatus(newStatus){
+        this.logger.debug(`OUTPUT: Change status from ${this.status} to ${newStatus}`);
         if (newStatus !== this.status){
             this.status = newStatus;
             this.emit("status", newStatus);
@@ -89,6 +92,7 @@ class Output extends EventEmitter
                 this.logger.info("OUTPUT: Connection reset");
             } else if (this.status === "EPIPE"){
                 this.logger.info("OUTPUT: Broken pipe");
+                this.socket.destroy();
             } else if (this.status === "ETIMEDOUT"){
                 this.logger.info("OUTPUT: Timeout");
             } else if (this.status === "EHOSTUNREACH"){
@@ -139,9 +143,13 @@ class Output extends EventEmitter
     }
 
     _sendFlags(){
+        this.waitingQueue = this.filterExpired(this.waitingQueue);
+
         if (this.waitingQueue.length > 0){
-            this.logger.debug(`Trying to send ${this.waitingQueue.length} flags by ${Math.ceil(this.waitingQueue.length/this.maxFlagsPerSend)} packs:`, this.waitingQueue);
+            let packCount = Math.ceil(this.waitingQueue.length/this.maxFlagsPerSend);
+            this.logger.debug(`Trying to send ${this.waitingQueue.length} flags by ${packCount} pack${packCount > 1 ? "s" : ""}:`, this.waitingQueue);
         }
+
         while (this.waitingQueue.length > 0){
 
             let currentPack = [];
@@ -152,20 +160,36 @@ class Output extends EventEmitter
             };
 
             this.socket.write(currentPack.map((flag) => flag.toString()).join('\n')+'\n', "utf-8", () => {
-                currentPack.forEach((flag) => {
-                    this.sentQueue.push(flag);
-                    this.sendingSet.delete(flag);
-                    this.emit("sent", flag);
-                });
+                for (let flag of currentPack) {
+                    if (this.sendingSet.delete(flag)){
+                        this.sentQueue.push(flag);
+                        this.emit("sent", flag);
+                    }
+                }
                 this.logger.info(`Sent ${currentPack.length} flags:`, currentPack);
             });
         }
+    }
+
+    filterExpired(flags){
+        let nonExpired = new Array;
+        let now = new Date;
+        for (let flag of flags) {
+            if ((now - flag.date > this.flagLifetime) || (this.lastRound && flag.date < this.lastRound)){
+                this.emit("expired", flag);
+            } else {
+                nonExpired.push(flag);
+            }
+        }
+        return nonExpired;
     }
 
     putInQueue(flags){
         if (!Array.isArray(flags)){
             throw new Error;
         }
+
+        flags = this.filterExpired(flags);
 
         this.waitingQueue = this.waitingQueue.concat(flags);
         this.waitingQueue.sort((a,b) => (a.priority-b.priority));

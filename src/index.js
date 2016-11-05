@@ -14,7 +14,8 @@ class Flagger
 
         this.output = new Output(Object.assign(options.output, {
             logger: options.logger,
-            receiverMessages: options.receiverMessages
+            receiverMessages: options.receiverMessages,
+            flagLifetime: options.flagLifetime
         }));
 
         this.logger = options.logger || new Logger;
@@ -32,18 +33,6 @@ class Flagger
             }
         });
 
-        this.output.on("ready", () => {
-            this.logger.debug("Output socket is ready");
-            if (this.globalQueue.length > 0){
-                this.output.putInQueue(this.globalQueue);
-                this.globalQueue = new Array;
-            }
-        });
-
-        this.output.on("fail", (flags) => {
-            this.globalQueue = this.globalQueue.concat(flags);
-        });
-
         this.output.on("answer", (flag, answer) => {
             this.logger.info(`Answer: ${flag} ${answer}`);
             flag.status = "ANSWERED";
@@ -53,12 +42,23 @@ class Flagger
         });
 
         this.output.on("sent", (flag) => {
-            flag.status = "SENT";
+            if (flag.status === "UNSENT"){
+                flag.status = "SENT";
+                this.database.updateFlag(flag);
+            }
+        });
+
+        this.output.on("expired", (flag) => {
+            flag.expired = true;
             this.database.updateFlag(flag);
+            this.logger.info(`Flag expired: ${flag}`);
         });
 
         this.tcpServer.on("connection", (socket) => {
             this.logger.debug(`${socket.remoteAddress}:${socket.remotePort} connected to raw socket`);
+            socket.write("Flagger: You can send flags now. Send 'stats' for statistics.\n");
+            socket.write("Flagger: Send flag again to get it's current status.\n");
+
             socket.on("data", (data) => {
 
                 let flags = data.toString().match(options.flagRegexp);
@@ -84,6 +84,10 @@ class Flagger
                         }
                     })
                 }
+            });
+
+            socket.on("error", (error) => {
+                this.logger.error(`Error with ${socket.remoteAddress} socket:\n${error}`);
             });
         });
 
@@ -143,6 +147,7 @@ if (require.main === module) {
                 sendPeriod: config.SEND_PERIOD,
                 maxFlagsPerSend: config.MAX_FLAGS_PER_SEND,
             },
+            flagLifetime: config.MAX_FLAG_LIFETIME,
             receiverMessages: config.RECEIVER_MESAGES,
             tcpServer: {
                 host: config.TCP_SOCKET_HOST,

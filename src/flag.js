@@ -12,7 +12,7 @@ class Flag
         this._id = flagObj._id || undefined;
         this.flag = flagObj.flag;
         this.tcpsocket = flagObj.tcpsocket || null;
-        this.status = flagObj.status || "WAITING";
+        this.status = flagObj.status || "UNSENT";
         this.expired = flagObj.expired || false;
         this.answer = flagObj.answer || null;
         this.date = flagObj.date || new Date();
@@ -21,7 +21,7 @@ class Flag
     }
 
     calculatePriority(){
-        if (this.status === "WAITING"){
+        if (this.status === "UNSENT"){
             this.priority = 2
         } else if (this.status === "SENT"){
             this.priority = 1

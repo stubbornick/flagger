@@ -6,5 +6,5 @@ else
 	command=del
 fi
 
-sudo tc qdisc $command dev docker0 root netem delay 5000ms 100000ms distribution normal loss 25% 25%
+sudo tc qdisc $command dev docker0 root netem delay 5000ms 100000ms distribution normal loss 15%
 #sudo tc qdisc $command dev docker0 root netem delay 500ms 10000ms distribution normal loss 25% 50%

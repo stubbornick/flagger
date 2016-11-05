@@ -58,14 +58,17 @@ class Database
 
     addFlags(flags){
         return new Promise((resolve, reject) => {
-            flags = flags.map(f => Object.assign(f.toObject(), { _id: this.nextFlagIndex++ }));
-            this.db.insert(flags, (err, insertedFlags) => {
+
+            let flagsObjects = new Array;
+            for (let i=0; i<flags.length; ++i){
+                flags[i]._id = this.nextFlagIndex++;
+                flagsObjects.push(flags[i].toObject());
+            }
+
+            this.db.insert(flagsObjects, (err, insertedFlags) => {
                 if (err){
                     this.logger.error(`DATABASE: Flag insertion error:\n${err}`);
                     reject(err);
-                }
-                for (let i=0; i<insertedFlags.length; ++i){
-                    flags[i]._id = insertedFlags._id;
                 }
                 resolve();
             });
@@ -98,7 +101,7 @@ class Database
         return new Promise((resolve) => {
             this.db.update({ flag: flag.flag }, flag.toObject(), (err) => {
                 if (err){
-                    this.logger.error(`DATABASE: Flag search error:\n${err}`);
+                    this.logger.error(`DATABASE: Flag update error:\n${err}`);
                 }
                 resolve();
             });
@@ -116,15 +119,26 @@ class Database
         })
     }
 
-    async getStatistics(){
-        let stats = {}
-        stats.total = await this.getCount({ });
-        stats.waiting = await this.getCount({ status: 'WAITING' });
-        stats.sent = await this.getCount({ status: 'SENT' });
-        stats.answered = await this.getCount({ status: 'ANSWERED' });
-        stats.accepted = await this.getCount({ answer: this.acceptedAnswer });
-        stats.expired = await this.getCount({ expired: true });
-        return stats;
+    getStatistics(){
+        return new Promise((resolve, reject) => {
+            Promise.all([
+                this.getCount({ }),
+                this.getCount({ status: "UNSENT" }),
+                this.getCount({ status: "SENT" }),
+                this.getCount({ status: "ANSWERED" }),
+                this.getCount({ answer: this.acceptedAnswer }),
+                this.getCount({ expired: true }),
+            ]).then(results => {
+                let stats = {};
+                stats.total = results[0];
+                stats.unsent = results[1];
+                stats.sent = results[2];
+                stats.answered = results[3];
+                stats.accepted = results[4];
+                stats.expired = results[5];
+                resolve(stats);
+            }).catch(reject);
+        })
     }
 }
 

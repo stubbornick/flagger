@@ -17,17 +17,20 @@ const CONFIG = {
     },
 
     // Input
-    TCP_SOCKET_HOST: "0.0.0.0",
-    TCP_SOCKET_PORT: 2222,
+    TCP_SERVER_HOST: "0.0.0.0",
+    TCP_SERVER_PORT: 31337,
+    FLAG_REGEXP: /[a-zA-Z0-9]{31}=/g,
+    IO_SERVER_HOST: "0.0.0.0",
+    IO_SERVER_PORT: 31336,
     FLAG_REGEXP: /[a-zA-Z0-9]{31}=/g,
 
     // Store
     FLAGS_DATABASE: "flags.db",
-    MAX_FLAG_LIFETIME: 1000*60*10,  // 5 minutes
+    MAX_FLAG_LIFETIME: 1000*60*10,  // 1000*60*10 = 5 minutes
 
     // Logging
-    DEBUG_LOG: "debug.log",
-    INFO_LOG: "info.log",
+    DEBUG_LOG: "/home/storage/logs/flagger/debug.log",
+    INFO_LOG: "/home/storage/logs/flagger/info.log",
 };
 
 

@@ -116,7 +116,7 @@ class Database
                 }
                 resolve(count);
             });
-        })
+        });
     }
 
     getStatistics(){
@@ -138,7 +138,21 @@ class Database
                 stats.expired = results[5];
                 resolve(stats);
             }).catch(reject);
-        })
+        });
+    }
+
+    getLastFlagsRaw(count = 100){
+        return new Promise((resolve) => {
+            this.db.find({ }).sort({ date: -1 }).limit(count).exec((err, flags) => {
+                if (err){
+                    this.logger.error(`DATABASE: Last flags fetching error:\n${err}`);
+                    resolve([]);
+                    return;
+                }
+
+                resolve(flags);
+            });
+        });
     }
 }
 

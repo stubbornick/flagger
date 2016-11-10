@@ -16,12 +16,20 @@ const loglevels = {
 
 class Logger
 {
-    constructor(infoLogFile = null, debugLogFile = null){
+    constructor(infoLogFile = null, debugLogFile = null, overrideError = false){
         this.debugLogFile = debugLogFile;
         this.infoLogFile = infoLogFile;
 
         for (let level in loglevels){
             this[level] = (...args) => this.print(loglevels[level], ...args);
+        }
+
+        if (overrideError){
+            const oldError = console.error;
+            global.console.error = (...args) => {
+                this.error(...args);
+                oldError(...args);
+            }
         }
     }
 

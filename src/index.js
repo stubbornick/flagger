@@ -93,6 +93,13 @@ class Flagger
                             }
                         }
                     })
+                } else if (lines.includes("drop")){
+                    socket.write("Drop all flags as expired!\n");
+                    this.output.dead();
+                    for (let flag of this.output.waitingQueue) {
+                        this.output.emit("expired", flag);
+                    }
+                    this.output.ready();
                 }
             });
 

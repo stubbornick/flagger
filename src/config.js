@@ -2,8 +2,8 @@
 
 const CONFIG = {
     // Output
-    FLAG_SERVICE_HOST: "flags.ructfe.org",
-    FLAG_SERVICE_PORT: 31337,
+    FLAG_SERVICE_HOST: "test_receiver.ctf",
+    FLAG_SERVICE_PORT: 6666,
     RECONNECT_TIMEOUT: 1000,
     SEND_PERIOD: 5000,       // 0 for immediate sending
     // SEND_PERIOD: 0,       // 0 for immediate sending
@@ -29,8 +29,11 @@ const CONFIG = {
     MAX_FLAG_LIFETIME: 1000*60*10,  // 1000*60*10 = 5 minutes
 
     // Logging
-    DEBUG_LOG: "logs/debug.log",
-    INFO_LOG: "logs/info.log",
+    logging: {
+        logfile: null,
+        printDate: false,
+        overrideError: true,
+    }
 };
 
 

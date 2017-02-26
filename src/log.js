@@ -16,9 +16,10 @@ const loglevels = {
 
 class Logger
 {
-    constructor(infoLogFile = null, debugLogFile = null, overrideError = false){
-        this.debugLogFile = debugLogFile;
-        this.infoLogFile = infoLogFile;
+    constructor({ debugLogfile, infoLogfile, logfile = "log.log", printDate = true, overrideError = false } = {}){
+        this.debugLogfile = debugLogfile || logfile;
+        this.infoLogfile = infoLogfile || logfile;
+        this.printDate = printDate;
 
         for (let level in loglevels){
             this[level] = (...args) => this.print(loglevels[level], ...args);
@@ -34,6 +35,7 @@ class Logger
     }
 
     print(level, ...args){
+        // Do not print large flags chunks wholly
         for (let i=0; i<args.length; ++i){
             if (Array.isArray(args[i])){
                 if (args[i][0] instanceof Flag){
@@ -48,13 +50,22 @@ class Logger
                 }
             }
         }
+
         let msg = util.format(...args);
-        msg = util.format("%s [%s] %s", dateFormat(new Date(), "yyyy.mm.dd HH:MM:ss"), level, msg);
-        console.log(msg);
-        if (level !== loglevels.debug){
-            fs.appendFileSync(this.infoLogFile, msg+"\n");
+
+        msg = util.format("[%s] %s", level, msg);
+        if (this.printDate) {
+            msg = util.format("%s %s", dateFormat(new Date(), "yyyy.mm.dd HH:MM:ss"), msg);
         }
-        fs.appendFileSync(this.debugLogFile, msg+"\n");
+
+        console.log(msg);
+
+        if (level !== loglevels.debug && this.infoLogfile){
+            fs.appendFileSync(this.infoLogfile, msg+"\n");
+        }
+        if (this.debugLogfile){
+            fs.appendFileSync(this.debugLogfile, msg+"\n");
+        }
     }
 }
 

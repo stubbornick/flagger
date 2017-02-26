@@ -221,7 +221,7 @@ if (require.main === module) {
                 host: config.IO_SERVER_HOST,
                 port: config.IO_SERVER_PORT,
             },
-            logger: new Logger(config.INFO_LOG, config.DEBUG_LOG, true),
+            logger: new Logger(config.logging),
             flagRegexp: config.FLAG_REGEXP,
             databaseFile: config.FLAGS_DATABASE,
         });

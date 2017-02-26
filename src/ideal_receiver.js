@@ -7,7 +7,10 @@ const util = require("util");
 const SERVER_HOST = "0.0.0.0";
 const SERVER_PORT = 6666;
 const FLAG_REGEXP = /\w{31}=/;
-const FLAG_LOGFILE= "flags_received.txt";
+// const FLAG_LOGFILE= "flags_received.txt";
+const FLAG_LOGFILE= null;
+// const LOGFILE     = "receiver.log";
+const LOGFILE     = null;
 
 const not_a_flag = "Is not a flag";
 const already_sent = "Already sent";
@@ -35,26 +38,28 @@ class FlagReceiver extends net.Server
 
     loadFlags(){
         this.received = new Map;
-        try{
-            fs.readFileSync(FLAG_LOGFILE).toString().split("\n").forEach((line) => {
-                if (line.length > 0){
-                    let A = line.split(" ");
-                    this.received.set(A.shift(), A.join(" "));
+        if (FLAG_LOGFILE){
+            try{
+                fs.readFileSync(FLAG_LOGFILE).toString().split("\n").forEach((line) => {
+                    if (line.length > 0){
+                        let A = line.split(" ");
+                        this.received.set(A.shift(), A.join(" "));
+                    }
+                });
+            } catch(e){
+                if (e.code !== "ENOENT"){
+                    throw e;
+                }
+                fs.writeFileSync(FLAG_LOGFILE, "");
+            }
+
+            fs.watch(FLAG_LOGFILE, {}, (event) => {
+                if (event !== "change"){
+                    this.log(`Reload flags from '${FLAG_LOGFILE}' due to '${event}'`);
+                    this.loadFlags();
                 }
             });
-        } catch(e){
-            if (e.code !== "ENOENT"){
-                throw e;
-            }
-            fs.writeFileSync(FLAG_LOGFILE, "");
         }
-
-        fs.watch(FLAG_LOGFILE, {}, (event) => {
-            if (event !== "change"){
-                this.log(`Reload flags from '${FLAG_LOGFILE}' due to '${event}'`);
-                this.loadFlags();
-            }
-        });
     }
 
     handleConnection(socket){
@@ -89,7 +94,10 @@ class FlagReceiver extends net.Server
                 let answer = good_answers[Math.floor(Math.random() * good_answers.length)];
                 this.answerOnInput(line, answer, socket);
                 this.received.set(line, answer);
-                fs.appendFileSync(FLAG_LOGFILE, `${line} ${answer}\n`);
+
+                if (FLAG_LOGFILE){
+                    fs.appendFileSync(FLAG_LOGFILE, `${line} ${answer}\n`);
+                }
             } else {
                 this.answerOnInput(line, already_sent, socket);
             }
@@ -113,5 +121,5 @@ class FlagReceiver extends net.Server
 }
 
 if (require.main === module) {
-    new FlagReceiver(SERVER_PORT, SERVER_HOST, "receiver.log");
+    new FlagReceiver(SERVER_PORT, SERVER_HOST, LOGFILE);
 }

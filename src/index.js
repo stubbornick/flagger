@@ -13,6 +13,21 @@ import Flag from "./flag"
 class Flagger
 {
     constructor(options){
+        this.logger = options.logger || new Logger;
+        this.initialize(options).catch((error) => {
+            this.logger.error("Error during initialization:\n", error);
+        });
+    }
+
+    async initialize(options){
+        this.database = new Database({
+            logger: this.logger,
+            acceptedAnswer: options.receiverMessages.accepted,
+        });
+
+        await this.database.connect({
+            file: options.databaseFile,
+        });
 
         this.output = new Output(Object.assign(options.output, {
             logger: options.logger,
@@ -20,12 +35,6 @@ class Flagger
             flagLifetime: options.flagLifetime
         }));
 
-        this.logger = options.logger || new Logger;
-        this.database = new Database({
-            file: options.databaseFile,
-            logger: this.logger,
-            acceptedAnswer: options.receiverMessages.accepted,
-        });
         this.tcpServer = new net.Server;
         this.httpServer = http.createServer();
         this.ioServer = new IOServer(this.httpServer);

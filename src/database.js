@@ -5,9 +5,12 @@ import Flag from "./flag";
 
 class Database
 {
-    constructor(options = {}){
-        this.logger = options.logger || null;
+    constructor({ logger = null, acceptedAnswer = "Accepted" }){
+        this.logger = logger;
+        this.acceptedAnswer = acceptedAnswer;
+    }
 
+    async connect(options){
         if (options.file){
             options.filename = options.file,
             options.autoload = true
@@ -28,8 +31,6 @@ class Database
                 this.nextFlagIndex = 1;
             }
         });
-
-        this.acceptedAnswer = options.acceptedAnswer;
     }
 
     addIndex(options){

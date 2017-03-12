@@ -9,20 +9,23 @@
     "generator": "node lib/flags_generator.js",
     "deploy": "npm run build && rsync -ruvt --exclude 'node_modules' . flagger@flagger.ctf:app",
     "build": "gulp build",
-    "watch": "gulp watch"
+    "watch": "gulp watch",
+    "test": "mocha --require source-map-support/register tests/index.js"
   },
   "author": "stubbornick",
   "license": "ISC",
   "devDependencies": {
     "babel-plugin-transform-async-to-generator": "^6.16.0",
     "babel-plugin-transform-es2015-modules-commonjs": "^6.16.0",
+    "defaults-deep": "^0.2.3",
     "del": "^2.2.2",
     "gulp": "^3.9.1",
     "gulp-babel": "^6.1.2",
     "gulp-cached": "^1.1.0",
     "gulp-notify": "^2.2.0",
     "gulp-plumber": "^1.1.0",
-    "gulp-sourcemaps": "^1.6.0"
+    "gulp-sourcemaps": "^1.6.0",
+    "randomstring": "^1.1.5"
   },
   "dependencies": {
     "dateformat": "^1.0.12",

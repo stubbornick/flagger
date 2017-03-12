@@ -4,7 +4,6 @@ import util from "util";
 import fs from "fs";
 import dateFormat from "dateformat";
 import Flag from "./flag";
-import { DEBUG_LOG, INFO_LOG } from "./config";
 
 const loglevels = {
     debug: 'DEBUG',
@@ -16,10 +15,11 @@ const loglevels = {
 
 class Logger
 {
-    constructor({ debugLogfile, infoLogfile, logfile = "log.log", printDate = true, overrideError = false } = {}){
+    constructor({ debugLogfile, infoLogfile, logfile = "log.log", printDate = true, overrideError = false, consolePrint = true } = {}){
         this.debugLogfile = debugLogfile || logfile;
         this.infoLogfile = infoLogfile || logfile;
         this.printDate = printDate;
+        this.consolePrint = consolePrint;
 
         for (let level in loglevels){
             this[level] = (...args) => this.print(loglevels[level], ...args);
@@ -58,7 +58,9 @@ class Logger
             msg = util.format("%s %s", dateFormat(new Date(), "yyyy.mm.dd HH:MM:ss"), msg);
         }
 
-        console.log(msg);
+        if (this.consolePrint){
+            console.log(msg);
+        }
 
         if (level !== loglevels.debug && this.infoLogfile){
             fs.appendFileSync(this.infoLogfile, msg+"\n");

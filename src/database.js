@@ -1,6 +1,6 @@
 "use strict";
 
-import Datastore from "nedb";
+import { MongoClient } from "mongodb";
 import Flag from "./flag";
 
 class Database
@@ -10,40 +10,33 @@ class Database
         this.acceptedAnswer = acceptedAnswer;
     }
 
-    async connect(options){
-        if (options.file){
-            options.filename = options.file,
-            options.autoload = true
-        }
-
-        this.db = new Datastore(options);
-        this.addIndex({ fieldName: "flag", unique: true });
-        this.addIndex({ fieldName: "status"});
-        this.addIndex({ fieldName: "expired"});
-        this.addIndex({ fieldName: "answer"});
-
-        this.nextFlagIndex = undefined;
-
-        this.db.find({}).sort({ _id: -1 }).limit(1).exec((err, flags) => {
-            if (flags.length === 1){
-                this.nextFlagIndex = flags[0]._id + 1;
-            } else {
-                this.nextFlagIndex = 1;
-            }
+    async open(url){
+        this.db = await new Promise((resolve, reject) => {
+            new MongoClient.connect(url, (error, db) => {
+                if (error){
+                    reject(error);
+                } else {
+                    this.logger.info("Connected to MongoDB");
+                    resolve(db);
+                }
+            });
         });
+
+        this.flagsCollection = this.db.collection("flags");
+
+        await this.addIndex({ flag: 1 }, { unique: true });
+        await this.addIndex({ status: 1 });
+        await this.addIndex({ expired: 1 });
+        await this.addIndex({ answer: 1 });
     }
 
-    addIndex(options){
-        this.db.ensureIndex(options, (err) => {
-            if (err){
-                this.logger.error(`DATABASE: Error during index creation:\n${err}`);
-            }
-        });
+    addIndex(fields, options=null){
+        return this.flagsCollection.createIndex(fields, options);
     }
 
     findFlag(flagString){
         return new Promise((resolve) => {
-            this.db.findOne({ flag: flagString }, (err, flag) => {
+            this.flagsCollection.findOne({ flag: flagString }, (err, flag) => {
                 if (err){
                     this.logger.error(`DATABASE: Flag search error:\n${err}`);
                     resolve(null);
@@ -59,14 +52,16 @@ class Database
 
     addFlags(flags){
         return new Promise((resolve, reject) => {
+            if (flags.length === 0){
+                resolve();
+            }
 
             let flagsObjects = new Array;
             for (let i=0; i<flags.length; ++i){
-                flags[i]._id = this.nextFlagIndex++;
                 flagsObjects.push(flags[i].toObject());
             }
 
-            this.db.insert(flagsObjects, (err, insertedFlags) => {
+            this.flagsCollection.insertMany(flagsObjects, null, (err, insertedFlags) => {
                 if (err){
                     this.logger.error(`DATABASE: Flag insertion error:\n${err}`);
                     reject(err);
@@ -78,13 +73,12 @@ class Database
 
     getUnansweredFlags(){
         return new Promise((resolve) => {
-            this.db.find({
-                $and: [
-                    { $not: { status: 'ANSWERED' } },
-                    { $not: { status: 'CANCELLED' } },
-                    { $not: { expired: true } },
-                ]
-            }, (err, flags) => {
+            this.flagsCollection.find({
+                status: {
+                    $nin: ["ANSWERED", "CANCELLED"]
+                },
+                expired: false
+            }).toArray((err, flags) => {
                 if (err){
                     this.logger.error(`DATABASE: Unanswered flags search error:\n${err}`);
                     resolve([]);
@@ -100,7 +94,7 @@ class Database
 
     updateFlag(flag){
         return new Promise((resolve) => {
-            this.db.update({ flag: flag.flag }, flag.toObject(), (err) => {
+            this.flagsCollection.updateOne({ flag: flag.flag }, flag.toObject(), null, (err) => {
                 if (err){
                     this.logger.error(`DATABASE: Flag update error:\n${err}`);
                 }
@@ -110,14 +104,7 @@ class Database
     }
 
     getCount(params){
-        return new Promise((resolve,reject) => {
-            this.db.count(params, function (err, count) {
-                if(err){
-                    reject(err);
-                }
-                resolve(count);
-            });
-        });
+        return this.flagsCollection.count(params);
     }
 
     getStatistics(){
@@ -144,7 +131,7 @@ class Database
 
     getLastFlagsRaw(count = 100){
         return new Promise((resolve) => {
-            this.db.find({ }).sort({ date: -1 }).limit(count).exec((err, flags) => {
+            this.flagsCollection.find({ }).sort({ date: -1 }).limit(count).toArray((err, flags) => {
                 if (err){
                     this.logger.error(`DATABASE: Last flags fetching error:\n${err}`);
                     resolve([]);

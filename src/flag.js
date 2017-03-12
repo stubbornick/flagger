@@ -9,7 +9,6 @@ class Flag
             throw new Error(`Unknown flag type: ${typeof(flag)}`);
         }
 
-        this._id = flagObj._id || undefined;
         this.flag = flagObj.flag;
         this.tcpsocket = flagObj.tcpsocket || null;
         this.status = flagObj.status || "UNSENT";
@@ -40,7 +39,6 @@ class Flag
 
     toObject(){
         return {
-            _id: this._id,
             flag: this.flag,
             status: this.status,
             expired: this.expired,

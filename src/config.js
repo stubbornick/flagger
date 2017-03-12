@@ -25,7 +25,7 @@ const CONFIG = {
     FLAG_REGEXP: /[a-zA-Z0-9]{31}=/g,
 
     // Store
-    FLAGS_DATABASE: "flags.db",
+    FLAGS_DATABASE: "mongodb://localhost:27017/flagger",
     MAX_FLAG_LIFETIME: 1000*60*10,  // 1000*60*10 = 5 minutes
 
     // Logging

@@ -10,24 +10,22 @@ import Database from "./database"
 import Flag from "./flag"
 
 
-class Flagger
+export default class Flagger
 {
     constructor(options){
+        this.options = options;
         this.logger = options.logger || new Logger;
-        this.initialize(options).catch((error) => {
-            this.logger.error("Error during initialization:\n", error);
-        });
     }
 
-    async initialize(options){
+    async start(){
+        const options = this.options;
+
         this.database = new Database({
             logger: this.logger,
             acceptedAnswer: options.receiverMessages.accepted,
         });
 
-        await this.database.connect({
-            file: options.databaseFile,
-        });
+        await this.database.open(options.flagsDatabase);
 
         this.output = new Output(Object.assign(options.output, {
             logger: options.logger,
@@ -35,10 +33,6 @@ class Flagger
             flagLifetime: options.flagLifetime
         }));
 
-        this.tcpServer = new net.Server;
-        this.httpServer = http.createServer();
-        this.ioServer = new IOServer(this.httpServer);
-        this.ioClients = new Set;
 
         this.database.getUnansweredFlags().then((flags) => {
             if (flags.length > 0){
@@ -71,6 +65,8 @@ class Flagger
             this.emitUpdate(flag);
         });
 
+        this.tcpServer = new net.Server;
+
         this.tcpServer.on("connection", (socket) => {
             this.logger.debug(`TCP: ${socket.remoteAddress}:${socket.remotePort} connected`);
             socket.write("Flagger: You can send flags now.\n");
@@ -85,7 +81,7 @@ class Flagger
                     }
 
                     this.processFlags(flags, socket).catch((error) => {
-                        this.logger.error("Error while process flags:", error);
+                        this.logger.error("Error while process flags:\n", error);
                     });
                 } else {
                     socket.write("Flagger: No flags in input!\n");
@@ -105,7 +101,7 @@ class Flagger
                 } else if (lines.includes("drop")){
                     socket.write("Drop all flags as expired!\n");
                     this.output.dead();
-                    for (let flag of this.output.waitingQueue) {
+                    for (const flag of this.output.waitingQueue) {
                         this.output.emit("expired", flag);
                     }
                     this.output.ready();
@@ -128,6 +124,10 @@ class Flagger
             let addr = this.tcpServer.address();
             this.logger.info(`Start listening on ${addr.address} ${addr.port}`);
         });
+
+        this.httpServer = http.createServer();
+        this.ioServer = new IOServer(this.httpServer);
+        this.ioClients = new Set;
 
         this.ioServer.on("connection", (client) => {
             const address = `${client.request.connection.remoteAddress}:${client.request.connection.remotePort}`;
@@ -160,7 +160,19 @@ class Flagger
             });
         });
 
-        this.httpServer.listen(options.ioServer.port, options.ioServer.host);
+        await Promise.all([new Promise((resolve) => {
+            this.tcpServer.on("listening", resolve);
+        }), new Promise((resolve) => {
+            this.httpServer.listen({
+                port: options.ioServer.port,
+                host: options.ioServer.host
+            }, (error) => {
+                if (error) {
+                    reject(error);
+                }
+                resolve();
+            });
+        })]);
     }
 
     emitUpdate(flag){
@@ -212,7 +224,7 @@ class Flagger
 
 if (require.main === module) {
     async function main() {
-        new Flagger({
+        const f = new Flagger({
             output: {
                 host: config.FLAG_SERVICE_HOST,
                 port: config.FLAG_SERVICE_PORT,
@@ -232,8 +244,10 @@ if (require.main === module) {
             },
             logger: new Logger(config.logging),
             flagRegexp: config.FLAG_REGEXP,
-            databaseFile: config.FLAGS_DATABASE,
+            flagsDatabase: config.FLAGS_DATABASE,
         });
+
+        await f.start();
     }
 
     main().catch((err) => console.error(err));

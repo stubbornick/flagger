@@ -1,6 +1,6 @@
 "use strict";
 
-const CONFIG = {
+export default {
     // Output
     FLAG_SERVICE_HOST: "test_receiver.ctf",
     FLAG_SERVICE_PORT: 6666,
@@ -19,13 +19,12 @@ const CONFIG = {
     // Input
     TCP_SERVER_HOST: "0.0.0.0",
     TCP_SERVER_PORT: 31337,
-    FLAG_REGEXP: /[a-zA-Z0-9]{31}=/g,
+    FLAG_REGEXP: /[a-zA-Z0-9]{31}=/,
     IO_SERVER_HOST: "0.0.0.0",
     IO_SERVER_PORT: 31336,
-    FLAG_REGEXP: /[a-zA-Z0-9]{31}=/g,
 
     // Store
-    FLAGS_DATABASE: "mongodb://localhost:27017/flagger",
+    FLAGS_DATABASE: "mongodb://127.0.0.1:27017/flagger",
     MAX_FLAG_LIFETIME: 1000*60*10,  // 1000*60*10 = 5 minutes
 
     // Logging
@@ -35,6 +34,3 @@ const CONFIG = {
         overrideError: true,
     }
 };
-
-
-export default CONFIG;

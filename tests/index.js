@@ -1,22 +1,23 @@
 "use strict";
 
-const MongoClient = require("mongodb").MongoClient;
 const chai = require("chai");
-const net = require("net");
 const { assert } = chai;
+const net = require("net");
 const EventEmitter = require("events");
-const randomstring = require("randomstring");
+const fs = require("fs");
+const MongoClient = require("mongodb").MongoClient;
 const defaultsDeep = require("defaults-deep");
 
 const Flagger = require("../lib").default;
-const defaultConfig = require("../lib/config").default;
 const Logger = require("../lib/log").default;
+const defaultConfig = require("../lib/config").default;
 
-
+const MONGODB_URL = defaultConfig.FLAGS_DATABASE + "-test";
 const RECEIVER_PORT = 6666;
+const FLAG_REGEXP = /[\w]{31}=/;
+const LOGFILE = "tests.log";
 
-const MONGODB_URL = `mongodb://172.17.0.2:27017/flagger`;
-const FLAG_REGEXP = /[\w]{31}=/g;
+const logger = new Logger({ logfile: LOGFILE, printDate: true, consolePrint: false });
 
 const DEFAULT_FLAGGER_CONFIG = {
     output: {
@@ -36,10 +37,35 @@ const DEFAULT_FLAGGER_CONFIG = {
         host: defaultConfig.IO_SERVER_HOST,
         port: defaultConfig.IO_SERVER_PORT,
     },
-    logger: new Logger({ logfile: "tests.log", printDate: "true", consolePrint: false }),
-    flagRegexp: defaultConfig.FLAG_REGEXP,
-    flagsDatabase: MONGODB_URL,
+    logger,
+    flagRegexp: FLAG_REGEXP,
+    flagsDatabase: MONGODB_URL
 };
+
+const delay = (t) => new Promise((resolve) => setTimeout(resolve, t));
+
+const waitWithTimeout = (p, timeout = 0) => {
+    if (timeout) {
+        return Promise.race([p, new Promise(resolve => setTimeout(() => resolve("TIMEOUT"), timeout))]);
+    }
+    return p;
+}
+
+const getFlags = (() => {
+    let i = 1;
+
+    return (count = 1, base = null) => {
+        const f = [];
+
+        for(let j = 0; j < count; j++) {
+            const istr = i.toString();
+            f.push("0".repeat(31 - istr.length) + istr + "=");
+            i++;
+        }
+
+        return f;
+    };
+})();
 
 
 class FlagReceiver extends EventEmitter {
@@ -47,9 +73,19 @@ class FlagReceiver extends EventEmitter {
         super();
 
         this.socket = new net.Server();
-        this.clients = new Set;
-        this.flags = new Set;
+        this.clients = new Set();
+        this.flags = new Set();
         this.answer = "Accepted";
+        this.linesReceived = 0;
+        this.flagRegexp = FLAG_REGEXP;
+        // if (!this.flagRegexp.flags.includes("g")) {
+        //     this.flagRegexp = RegExp(this.flagRegexp, "g");
+        // }
+    }
+
+    wipe() {
+        this.flags = new Set();
+        this.linesReceived = 0;
     }
 
     start() {
@@ -57,15 +93,34 @@ class FlagReceiver extends EventEmitter {
             this.clients.add(client);
             // console.log("RECEIVER CONNECT", client.address());
 
+            let inputBuffer = "";
+
             client.on("data", (data) => {
                 // console.log("REC DATA", data.toString());
-                const flags = data.toString().match(FLAG_REGEXP);
-                for(let i = 0; i < flags.length; i++) {
-                    if (!this.flags.has(flags[i])) {
-                        this.flags.add(flags[i]);
-                        this.emit("new flag", flags[i]);
-                        client.write(this.answer + "\n");
+                data = inputBuffer + data.toString();
+
+                const lines = data.split("\n");
+                for(let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    if (this.flagRegexp.test(line)) {
+                        this.emit("flag", line);
+                        this.linesReceived++;
+
+                        if (!this.flags.has(line)) {
+                            this.flags.add(line);
+                            this.emit("new flag", line);
+                            if (this.answer) {
+                                client.write(this.answer + "\n");
+                            }
+                        }
                     }
+                }
+
+                const last = lines.pop();
+                if (last.length > 0) {
+                    inputBuffer = last;
+                } else {
+                    inputBuffer = "";
                 }
             });
 
@@ -75,7 +130,10 @@ class FlagReceiver extends EventEmitter {
         });
 
         return new Promise((resolve) => {
-            this.socket.listen({ host: "0.0.0.0", port: RECEIVER_PORT }, resolve);
+            this.socket.listen({ host: "0.0.0.0", port: RECEIVER_PORT }, () => {
+                logger.debug("RECEIVER: started");
+                resolve();
+            });
         });
     }
 
@@ -85,14 +143,34 @@ class FlagReceiver extends EventEmitter {
         }
         return new Promise((resolve) => {
             if (this.socket) {
-                this.socket.close(resolve);
+                this.socket.close(() => {
+                    logger.debug("RECEIVER: stopped");
+                    resolve();
+                });
             }
         });
     }
 
-    waitForFlags(count = 1) {
+    waitForFlags(count = 1, timeout) {
+        logger.debug("RECEIVER: waitForFlags", count, timeout);
+
         let c = 0;
-        return new Promise((resolve) => {
+        const p = new Promise((resolve) => {
+            this.on("flag", () => {
+                c++;
+                if (c >= count) {
+                    resolve();
+                }
+            });
+        });
+        return waitWithTimeout(p, timeout);
+    }
+
+    waitForNewFlags(count = 1, timeout) {
+        logger.debug("RECEIVER: waitForNewFlags", count, timeout);
+
+        let c = 0;
+        const p = new Promise((resolve) => {
             this.on("new flag", () => {
                 c++;
                 if (c >= count) {
@@ -100,24 +178,50 @@ class FlagReceiver extends EventEmitter {
                 }
             });
         });
+        return waitWithTimeout(p, timeout);
     }
 
-    waitForFlagsTotal(count = 1) {
+    waitForFlagsTotal(count = 1, timeout) {
+        logger.debug("RECEIVER: waitForFlagsTotal", count, timeout);
+
         if (this.flags.size >= count){
             return Promise.resolve();
         }
 
-        return new Promise((resolve) => {
+        const p = new Promise((resolve) => {
             this.on("new flag", () => {
                 if (this.flags.size >= count) {
                     resolve();
                 }
             });
         });
+        return waitWithTimeout(p, timeout);
+    }
+
+    waitForAnyConnection(timeout) {
+        logger.debug("RECEIVER: waitForAnyConnection", timeout);
+
+        const p = new Promise((resolve) => {
+            if (this.clients.size > 0){
+                resolve();
+            } else {
+                this.socket.on("connection", () => {
+                    resolve();
+                })
+            }
+        });
+
+        return waitWithTimeout(p, timeout);
     }
 }
 
 class Client extends EventEmitter {
+    constructor() {
+        super();
+        this.answers = new Set();
+        this.linesReceived = 0;
+    }
+
     connect({ port = RECEIVER_PORT, host = "localhost" }) {
         if (!this.socket) {
             this.socket = new net.Socket();
@@ -127,6 +231,38 @@ class Client extends EventEmitter {
                     if (error) {
                         reject(error);
                     }
+
+                    this.socket.on("close", () => {
+                        this.socket = null;
+                    });
+
+                    let inputBuffer = "";
+
+                    this.socket.on("data", (data) => {
+                        fs.appendFile("client.log", "RAW: "+data.toString()+"\n", (e) => e && console.error(e));
+                        data = inputBuffer + data.toString();
+
+                        const lines = data.split("\n");
+                        const last = lines.pop();
+
+                        for (let i = 0; i < lines.length; i++) {
+                            const line = lines[i];
+                            this.linesReceived++;
+
+                            if (line.includes("Answer:") || line.includes("already in DB")) {
+                                this.answers.add(line);
+                                this.emit("answer", line);
+                                fs.appendFile("client.log", "ANS: "+line+"\n", (e) => e && console.error(e));
+                            }
+                        }
+
+                        if (last.length > 0) {
+                            inputBuffer = last;
+                        } else {
+                            inputBuffer = "";
+                        }
+                    });
+
                     resolve();
                 });
             });
@@ -136,11 +272,49 @@ class Client extends EventEmitter {
     }
 
     send(what) {
+        let countMsg;
         if (Array.isArray(what)) {
+            countMsg = `${what.length} flags`;
             what = what.join("\n") + "\n";
+        } else {
+            countMsg = `${what.length} chars`;
         }
 
-        this.socket.write(what);
+        this.socket.write(what, () => {
+            logger.info(`CLIENT: Write ${countMsg} to socket`);
+        });
+    }
+
+    waitForAnswers(count, timeout) {
+        logger.debug("CLIENT: waitForAnswers", count, timeout);
+
+        let c = 0;
+        const p = new Promise((resolve) => {
+            this.on("answer", () => {
+                c++;
+                if (c >= count) {
+                    resolve();
+                }
+            });
+        });
+        return waitWithTimeout(p, timeout);
+    }
+
+    waitForAnswersTotal(count = 1, timeout) {
+        logger.debug("CLIENT: waitForAnswersTotal", count, timeout);
+
+        if (this.answers.size >= count){
+            return Promise.resolve();
+        }
+
+        const p = new Promise((resolve) => {
+            this.on("answer", () => {
+                if (this.answers.size >= count) {
+                    resolve();
+                }
+            });
+        });
+        return waitWithTimeout(p, timeout);
     }
 
     disconnect() {
@@ -148,47 +322,310 @@ class Client extends EventEmitter {
     }
 }
 
-function getFlags(count = 1) {
-    const f = [];
-    for (let i = 0; i < count; i++) {
-        f.push(`${randomstring.generate(31)}=`);
-    }
-    return f;
-}
 
-describe("Flagger", () => {
+describe("Flagger", function () {
     let flagger;
     let receiver;
     let client;
+    this.timeout(5000);
 
-    before(async () => {
+    const cleanDatabase = async () => {
         const db = await new MongoClient.connect(MONGODB_URL);
         await db.dropDatabase();
         await db.close();
+    };
+
+    before(() => {
+        try {
+            fs.unlinkSync(LOGFILE);
+        } catch(e) {
+            // swallow
+        }
+        try {
+            fs.unlinkSync("client.log");
+        } catch(e) {
+            // swallow
+        }
     });
 
-    beforeEach(async () => {
+    beforeEach(async function() {
+        logger.debug(`Next test: '${this.currentTest.title}'`);
+
         receiver = new FlagReceiver();
         await receiver.start();
 
         client = new Client();
     });
 
-    afterEach(async () => {
+    afterEach(async function() {
         await receiver.stop();
+        if (flagger && flagger.state === "run") {
+            await flagger.stop();
+        }
+
+        const msg = `Test '${this.currentTest.title}' ${this.currentTest.state}. Stats:\n` +
+            `\tRECEIVER: ${receiver.flags.size} flags\n` +
+            `\tCLIENT: ${client.answers.size} answers\n` +
+            `\tCLIENT: ${client.answers.size} lines`;
+        logger.info(msg);
+        fs.appendFile("client.log", msg+"\n", (e) => e && console.error(e));
     });
 
-    it("test FlagReceiver, Client and getFlags()", async () => {
-        await client.connect({ port: RECEIVER_PORT });
-        await client.send(getFlags(10));
-        await receiver.waitForFlagsTotal(10);
+    describe("Unit-tests", () => {
+        beforeEach(async () => {
+            await cleanDatabase();
+        });
+
+        it("basic test for FlagReceiver, Client and getFlags()", async () => {
+            await client.connect({ port: RECEIVER_PORT });
+            await client.send(getFlags(10));
+            await receiver.waitForFlagsTotal(10);
+        });
+
+        it("receiver don't count duplicates", async () => {
+            await client.connect({ port: RECEIVER_PORT });
+
+            const first = getFlags(10)
+            await client.send(first);
+            await receiver.waitForFlagsTotal(10);
+
+            const p = receiver.waitForFlags(10);
+            await client.send(first);
+            await p;
+            assert.equal(receiver.flags.size, 10);
+        });
+
+        it("start and stop", async () => {
+            flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+            let s = flagger.start();
+            await Promise.all([s, receiver.waitForAnyConnection()]);
+            await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+            await flagger.stop();
+
+            // Should throw if last flagger not free any resource
+            flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+            s = flagger.start();
+            await Promise.all([s, receiver.waitForAnyConnection()]);
+            await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+            await flagger.stop();
+        })
+
+        it("simple", async () => {
+            flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+            await flagger.start();
+            await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+            client.send(getFlags(10));
+            await receiver.waitForFlagsTotal(10);
+            await client.waitForAnswersTotal(10);
+            await flagger.stop();
+        });
+
+        it("1K flags", async () => {
+            flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+            await flagger.start();
+            await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+            client.send(getFlags(1000));
+            await receiver.waitForFlagsTotal(1000);
+            await client.waitForAnswersTotal(1000);
+            await flagger.stop();
+        });
+
+        it("get rid of duplicates", async () => {
+            flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+            await flagger.start();
+            await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+            const flags = getFlags(1000);
+            client.send(flags);
+            await receiver.waitForFlagsTotal(1000);
+
+            client.send(flags);
+            assert.equal(await receiver.waitForFlags(1000, 1000), "TIMEOUT");
+            await client.waitForAnswersTotal(2000);
+            assert.equal(receiver.flags.size, receiver.linesReceived);
+            await flagger.stop();
+        });
+
+        describe("unstable receiver", () => {
+            it("keep flags until receiver up", async () => {
+                flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                await flagger.start();
+                await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                await receiver.stop();
+                await client.send(getFlags(100));
+                await delay(500);
+                assert.equal(client.answers.size, 0);
+
+                await receiver.start();
+                await receiver.waitForFlagsTotal(100);
+                await client.waitForAnswersTotal(100);
+            });
+
+            it("persistent store flags + stop() wait for flags processing", async () => {
+                flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                await flagger.start();
+                await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                await receiver.stop();
+                await client.send(getFlags(100));
+                await new Promise((resolve) => [...flagger.tcpClients.keys()][0].once("data", resolve));
+                await flagger.stop();
+
+                await receiver.start();
+                await flagger.start();
+
+                await receiver.waitForFlagsTotal(100);
+            });
+
+            it("resend unanswered flags", async () => {
+                flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                await flagger.start();
+                await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                receiver.answer = null;
+                client.send(getFlags(100));
+                await receiver.waitForFlagsTotal(100);
+
+                await receiver.stop();
+                receiver = new FlagReceiver();
+                await receiver.start();
+
+                await receiver.waitForFlagsTotal(100);
+                await client.waitForAnswersTotal(100);
+            });
+        });
+
+        describe("TCP Commands", () => {
+            describe("drop", () => {
+                it("drop after send", async () => {
+                    flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                    await flagger.start();
+                    await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                    receiver.answer = null;
+                    client.send(getFlags(100));
+                    await receiver.waitForFlagsTotal(100);
+
+                    await client.send("drop\n");
+                    receiver.answer = "Accepted";
+                    receiver.wipe();
+
+                    client.send(getFlags(100));
+                    await client.waitForAnswersTotal(100);
+                    assert.equal(receiver.flags.size, 100);
+                    assert.equal(client.answers.size, 100);
+                });
+
+                it("drop when output lost connection", async () => {
+                    flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                    await flagger.start();
+                    await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                    receiver.answer = null;
+                    client.send(getFlags(100));
+                    await receiver.waitForFlagsTotal(100);
+
+                    await receiver.stop();
+                    await client.send("drop\n");
+
+                    receiver = new FlagReceiver();
+                    await receiver.start();
+
+                    client.send(getFlags(100));
+                    await client.waitForAnswersTotal(100);
+                    assert.equal(receiver.flags.size, 100);
+                    assert.equal(client.answers.size, 100);
+                });
+            });
+        });
     });
 
-    it("simple", async () => {
-        flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
-        await flagger.start();
-        await client.connect({ port: defaultConfig.TCP_SERVER_PORT });
-        client.send(getFlags(100));
-        await receiver.waitForFlagsTotal(100);
-    }).timeout(10000);
+    describe("High-Load", function () {
+        this.timeout(60000);
+        const logger = new Logger({ logfile: LOGFILE, printDate: true, consolePrint: false });
+
+        const highLoadConfig = defaultsDeep({
+            output: {
+                sendPeriod: 0,
+                maxFlagsPerSend: 0
+            },
+            logger
+        }, DEFAULT_FLAGGER_CONFIG);
+
+        before(async () => {
+            await cleanDatabase();
+        });
+
+        after(async () => {
+            await cleanDatabase();
+        });
+
+        for (let i = 1; i <= 3; i++) {
+            it(`${i} pack(s) by 10K flags`, async () => {
+                flagger = new Flagger(highLoadConfig);
+                await flagger.start();
+                await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                for(let j = 1; j <= i; j++) {
+                    client.send(getFlags(10000));
+                    // console.log("FLAGS", j*10000);
+                    await receiver.waitForFlagsTotal(j*10000);
+                    // console.log("ANSWERS", j*10000);
+                    await client.waitForAnswersTotal(j*10000);
+                }
+            });
+        }
+
+        it("20K flags + 20K duplicates", async () => {
+            flagger = new Flagger(highLoadConfig);
+            await flagger.start();
+            await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+
+            const firstFlags = getFlags(10000);
+            client.send(firstFlags);
+            flagger.logger.debug("First pack sending");
+            await receiver.waitForFlagsTotal(10000);
+
+            const secondFlags = getFlags(10000);
+            client.send(secondFlags);
+            flagger.logger.debug("Second pack sending");
+            await receiver.waitForFlagsTotal(20000);
+            await client.waitForAnswersTotal(20000);
+
+            const duplicates = firstFlags.concat(secondFlags);
+
+            client.send(duplicates);
+            flagger.logger.debug("Duplicates sending");
+            await client.waitForAnswers(duplicates.length);
+            assert.equal(receiver.flags.size, 20000);
+            assert.equal(receiver.linesReceived, 20000);
+
+            await flagger.stop();
+        });
+
+        const FLAGS_PER_SECOND = 500;
+        const ROUNDS = 5;
+
+        it(`${FLAGS_PER_SECOND} flags per second`, async () => {
+            flagger = new Flagger(highLoadConfig);
+            await flagger.start();
+            await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+            // warming-up
+            await client.send(getFlags(1000));
+            await client.waitForAnswersTotal(1000);
+
+            for (let i = 0; i < ROUNDS; i++) {
+                await client.send(getFlags(FLAGS_PER_SECOND));
+                const r = await receiver.waitForFlagsTotal(1000 + (i+1) * FLAGS_PER_SECOND, 1000);
+                assert.notEqual(r, "TIMEOUT", `on ${i+1} pack`);
+            }
+
+            await client.waitForAnswersTotal(1000 + ROUNDS * FLAGS_PER_SECOND);
+
+            await flagger.stop();
+        });
+    });
 });

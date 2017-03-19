@@ -22,14 +22,14 @@ class Output extends EventEmitter
 
         this.socket = new net.Socket;
         this.status = "NONE";
-        this.waitingQueue = new Array();
+        this.waitingQueue = [];
         this.sendingSet = new Set();
-        this.sentQueue = new Array();
+        this.sentQueue = [];
         this.sendTimer = null;
         this.inputBuffer = "";
 
         this.socket.on("error", (error) => {
-            if (error.code){
+            if (error.code) {
                 this._changeStatus(error.code);
             } else {
                 this.logger.warning("OUTPUT: Unknown socket error:\n", error);
@@ -39,11 +39,13 @@ class Output extends EventEmitter
         this.socket.on("close", () => {
             this.logger.debug("OUTPUT: Socket closed");
 
+            this.inputBuffer = "";
+
             setTimeout(() => {
                 this.connect();
             }, this.reconnectTimeout);
 
-            if (this.status === "READY"){
+            if (this.status === "READY") {
                 this._changeStatus("DISCONNECTED");
             }
         });
@@ -52,21 +54,29 @@ class Output extends EventEmitter
             this._changeStatus("READY");
         });
 
-        this.socket.on("data", (data) => {
-            let answers = (this.inputBuffer + data.toString()).split('\n');
-            let last = answers.pop();
+        this.socket.on("drain", () => {
+            this.logger.debug("OUTPUT: Drain");
+        });
 
-            for (let answer of answers) {
-                if (this.receiverMessages.greetings.includes(answer)){
+        this.socket.on("data", (rawdata) => {
+            let datas = (this.inputBuffer + rawdata.toString()).split('\n');
+            let last = datas.pop();
+
+            let answers = [];
+
+            for (let i = 0; i < datas.length; i++) {
+                if (this.receiverMessages.greetings.includes(datas[i])) {
                     this.logger.debug("OUTPUT: Greetings skipped");
-                } else if (this.sentQueue.length > 0){
-                    this.emit("answer", this.sentQueue.shift(), answer);
+                } else if (this.sentQueue.length > 0) {
+                    answers.push([this.sentQueue.shift(), datas[i]]);
                 } else {
-                    this.logger.warning(`OUTPUT: Received data not related to any flag: ${answer}`);
+                    this.logger.warning(`OUTPUT: Received data not related to any flag: ${datas[i]}`);
                 }
             }
 
-            if (last.length > 0){
+            this.emit("answers", answers);
+
+            if (last.length > 0) {
                 this.inputBuffer += last;
             } else {
                 this.inputBuffer = "";
@@ -76,32 +86,32 @@ class Output extends EventEmitter
         this.connect();
     }
 
-    _changeStatus(newStatus){
+    _changeStatus(newStatus) {
         this.logger.debug(`OUTPUT: Change status from ${this.status} to ${newStatus}`);
-        if (newStatus !== this.status){
+        if (newStatus !== this.status) {
             this.status = newStatus;
             this.emit("status", newStatus);
 
-            if (this.status === "READY"){
+            if (this.status === "READY") {
                 this.logger.info("OUTPUT: Connected");
-            } else if (this.status === "DISCONNECTED"){
+            } else if (this.status === "DISCONNECTED") {
                 this.logger.info("OUTPUT: Disconnected");
-            } else if (this.status === "ECONNREFUSED"){
+            } else if (this.status === "ECONNREFUSED") {
                 this.logger.info("OUTPUT: Connection refused");
-            } else if (this.status === "ECONNRESET"){
+            } else if (this.status === "ECONNRESET") {
                 this.logger.info("OUTPUT: Connection reset");
-            } else if (this.status === "EPIPE"){
+            } else if (this.status === "EPIPE") {
                 this.logger.info("OUTPUT: Broken pipe");
                 this.socket.destroy();
-            } else if (this.status === "ETIMEDOUT"){
+            } else if (this.status === "ETIMEDOUT") {
                 this.logger.info("OUTPUT: Timeout");
-            } else if (this.status === "EHOSTUNREACH"){
+            } else if (this.status === "EHOSTUNREACH") {
                 this.logger.info(`OUTPUT: Host ${this.host} unreachable`);
             } else {
                 this.logger.warning(`OUTPUT: Unknown socket status: ${this.status}`);
             };
 
-            if (this.status === "READY"){
+            if (this.status === "READY") {
                 this.ready();
             } else {
                 this.dead();
@@ -109,25 +119,25 @@ class Output extends EventEmitter
         }
     }
 
-    ready(){
+    ready() {
         this._sendFlags();
-        if (this.sendPeriod > 0){
+        if (this.sendPeriod > 0) {
             this.sendTimer = setInterval(this._sendFlags.bind(this), this.sendPeriod);
         }
     }
 
-    dead(){
-        if (this.sendingSet.size + this.sentQueue.length > 0){
-            let failed = this.sentQueue.concat(Array.from(this.sendingSet));
+    dead() {
+        if (this.sendingSet.size + this.sentQueue.length > 0) {
+            const failed = this.sentQueue.concat(Array.from(this.sendingSet));
 
-            this.sendingSet = new Set;
-            this.sentQueue = new Array;
+            this.sendingSet = new Set();
+            this.sentQueue = [];
 
-            this.logger.debug(`Return ${failed.length} flags to waitingQueue:`, failed);
+            this.logger.debug(`OUTPUT: Return ${failed.length} flags to waitingQueue:`, failed);
             this.putInQueue(failed);
         }
 
-        if (this.sendTimer){
+        if (this.sendTimer) {
             clearInterval(this.sendTimer);
             this.sendTimer = null;
         }
@@ -142,51 +152,59 @@ class Output extends EventEmitter
         });
     }
 
-    _sendFlags(){
+    _sendFlags() {
         this.waitingQueue = this.filterExpired(this.waitingQueue);
 
-        if (this.waitingQueue.length > 0){
+        if (this.waitingQueue.length > 0) {
             let packCount = Math.ceil(this.waitingQueue.length/this.maxFlagsPerSend);
-            this.logger.debug(`Trying to send ${this.waitingQueue.length} flags by ${packCount} pack${packCount > 1 ? "s" : ""}:`, this.waitingQueue);
+            this.logger.debug(`OUTPUT: Trying to send ${this.waitingQueue.length} flags by ${packCount} pack${packCount > 1 ? "s" : ""}:`, this.waitingQueue);
         }
 
-        while (this.waitingQueue.length > 0){
+        while (this.waitingQueue.length > 0) {
 
             let currentPack = [];
-            while (currentPack.length < this.maxFlagsPerSend && this.waitingQueue.length > 0){
+            while (currentPack.length < this.maxFlagsPerSend && this.waitingQueue.length > 0) {
                 let f = this.waitingQueue.pop();
                 currentPack.push(f);
                 this.sendingSet.add(f);
             };
 
             this.socket.write(currentPack.map((flag) => flag.toString()).join('\n')+'\n', "utf-8", () => {
-                for (let flag of currentPack) {
-                    if (this.sendingSet.delete(flag)){
-                        this.sentQueue.push(flag);
-                        this.emit("sent", flag);
+                for (let i = 0; i < currentPack.length; i++) {
+                    if (this.sendingSet.delete(currentPack[i])) {
+                        this.sentQueue.push(currentPack[i]);
                     }
                 }
-                this.logger.info(`Sent ${currentPack.length} flags:`, currentPack);
+                this.emit("sent", currentPack);
+                this.logger.info(`OUTPUT: Sent ${currentPack.length} flags:`, currentPack);
             });
         }
     }
 
-    filterExpired(flags){
-        let nonExpired = new Array;
-        let now = new Date;
-        for (let flag of flags) {
-            if ((now - flag.date > this.flagLifetime) || (this.lastRound && flag.date < this.lastRound)){
-                this.emit("expired", flag);
+    filterExpired(flags) {
+        const now = new Date;
+        let expired = [];
+        let nonExpired = [];
+
+        for (let i = 0; i < flags.length; i++) {
+            const flag = flags[i];
+
+            if (flag.expired || (now - flag.date > this.flagLifetime) || (this.lastRound && flag.date < this.lastRound)) {
+                expired.push(flag)
             } else {
                 nonExpired.push(flag);
             }
         }
+
+        if (expired.length > 0) {
+            this.emit("expired", expired);
+        }
         return nonExpired;
     }
 
-    putInQueue(flags){
-        if (!Array.isArray(flags)){
-            throw new Error;
+    putInQueue(flags) {
+        if (!Array.isArray(flags)) {
+            throw new Error("'flags' should be an array");
         }
 
         flags = this.filterExpired(flags);
@@ -194,11 +212,17 @@ class Output extends EventEmitter
         this.waitingQueue = this.waitingQueue.concat(flags);
         this.waitingQueue.sort((a,b) => (a.priority-b.priority));
 
-        // this.logger.debug(`OUTPUT: Add ${flags.length} flags to waitingQueue:, flags);
+        // this.logger.debug(`OUTPUT: Add ${flags.length} flags to waitingQueue:`, flags);
 
-        if (this.sendPeriod === 0 && this.status === "READY"){
+        if (this.sendPeriod === 0 && this.status === "READY") {
             this._sendFlags();
         }
+    }
+
+    stop() {
+        this.dead();
+        this.socket.removeAllListeners("close");
+        this.socket.destroy();
     }
 }
 

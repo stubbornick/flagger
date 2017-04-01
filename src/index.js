@@ -271,7 +271,7 @@ export default class Flagger
         }
 
         this.ioClients.forEach((client) => {
-            client.emit("update", flag.map(x => x.toObject()));
+            client.emit("update", flags.map(x => x.toObject()));
         });
     }
 

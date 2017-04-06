@@ -5,8 +5,9 @@ const { assert } = chai;
 const net = require("net");
 const EventEmitter = require("events");
 const fs = require("fs");
-const MongoClient = require("mongodb").MongoClient;
 const defaultsDeep = require("defaults-deep");
+const { MongoClient } = require("mongodb");
+const SocketIOClient = require("socket.io-client");
 
 const Flagger = require("../lib").default;
 const Logger = require("../lib/log").default;
@@ -24,7 +25,7 @@ const DEFAULT_FLAGGER_CONFIG = {
         host: "localhost",
         port: RECEIVER_PORT,
         reconnectTimeout: 1000,
-        sendPeriod: 1000,
+        sendPeriod: 500,
         maxFlagsPerSend: defaultConfig.MAX_FLAGS_PER_SEND,
     },
     flagLifetime: defaultConfig.MAX_FLAG_LIFETIME,
@@ -100,23 +101,32 @@ class FlagReceiver extends EventEmitter {
                 data = inputBuffer + data.toString();
 
                 const lines = data.split("\n");
+                const last = lines.pop();
+
                 for(let i = 0; i < lines.length; i++) {
                     const line = lines[i];
+                    this.linesReceived++;
+
                     if (this.flagRegexp.test(line)) {
                         this.emit("flag", line);
-                        this.linesReceived++;
 
                         if (!this.flags.has(line)) {
                             this.flags.add(line);
                             this.emit("new flag", line);
-                            if (this.answer) {
+                            if (typeof this.answer === "string") {
                                 client.write(this.answer + "\n");
+                            } else if (typeof this.answer === "function") {
+                                let res = this.answer(line);
+                                if (res) {
+                                    client.write(res + "\n");
+                                }
                             }
+                        } else {
+                            client.write("Is already sent\n");
                         }
                     }
                 }
 
-                const last = lines.pop();
                 if (last.length > 0) {
                     inputBuffer = last;
                 } else {
@@ -141,6 +151,9 @@ class FlagReceiver extends EventEmitter {
         for (let client of this.clients.keys()) {
             client.destroy();
         }
+        this.clients = new Set();
+
+        this.socket.removeAllListeners();
         return new Promise((resolve) => {
             if (this.socket) {
                 this.socket.close(() => {
@@ -322,6 +335,98 @@ class Client extends EventEmitter {
     }
 }
 
+class IOClient extends EventEmitter {
+    constructor() {
+        super();
+        this.updates = 0;
+        this.linesReceived = 0;
+    }
+
+    connect({ port = RECEIVER_PORT, host = "localhost" }) {
+        if (!this.socket) {
+            this.socket = new SocketIOClient.connect(`http://${host}:${port}/`);
+
+            return new Promise((resolve, reject) => {
+                this.socket.once("connect", () => {
+                    this.socket.on("disconnect", () => {
+                        this.socket = null;
+                    });
+
+                    this.socket.on("update", (data) => {
+                        this.updates++;
+                    });
+
+                    resolve();
+                });
+            });
+        } else {
+            throw new Error("Already connected");
+        }
+    }
+
+    send(what, callback=null) {
+        let countMsg;
+        if (Array.isArray(what)) {
+            countMsg = `${what.length} flags`;
+            what = {
+                command: "flags",
+                data: what.join(",") + "\n"
+            }
+        } else if (typeof what === "object") {
+            countMsg = `${Object.keys(what).length} chars`;
+        }
+
+        return new Promise((resolve) => {
+            this.socket.emit("command", what, (result) => {
+                if (what.command === "flags") {
+                    if (result === "OK") {
+                        logger.info(`IO CLIENT: Emit ${countMsg}`);
+                    } else {
+                        throw new Error(`Unknown answer from server: '${answer}'`);
+                    }
+                }
+                resolve(result);
+            });
+        });
+    }
+
+    waitForUpdates(count, timeout) {
+        logger.debug("IO CLIENT: waitForUpdates", count, timeout);
+
+        let c = 0;
+        const p = new Promise((resolve) => {
+            this.socket.on("update", () => {
+                c++;
+                if (c >= count) {
+                    resolve();
+                }
+            });
+        });
+        return waitWithTimeout(p, timeout);
+    }
+
+    waitForUpdatesTotal(count = 1, timeout) {
+        logger.debug("IO CLIENT: waitForUpdatesTotal", count, timeout);
+
+        if (this.updates >= count){
+            return Promise.resolve();
+        }
+
+        const p = new Promise((resolve) => {
+            this.socket.on("update", () => {
+                if (this.updates >= count) {
+                    resolve();
+                }
+            });
+        });
+        return waitWithTimeout(p, timeout);
+    }
+
+    disconnect() {
+        this.socket.disconnect();
+    }
+}
+
 
 describe("Flagger", function () {
     let flagger;
@@ -494,6 +599,59 @@ describe("Flagger", function () {
                 await receiver.waitForFlagsTotal(100);
                 await client.waitForAnswersTotal(100);
             });
+
+            describe("bad answers", () => {
+                let accepted;
+
+                const flaggerConfig = defaultsDeep({
+                    output: { resendTimeout: 100 },
+                    receiverMessages: { badAnswers: ["Bad answer"] }
+                }, DEFAULT_FLAGGER_CONFIG);
+
+                function badAnswer(flag) {
+                    return "Bad answer";
+                }
+                function accept(flag) {
+                    accepted++;
+                    return "Accepted";
+                }
+
+                beforeEach(() => {
+                    accepted = 0;
+                });
+
+                it("simple resend", async () => {
+                    flagger = new Flagger(flaggerConfig);
+                    await flagger.start();
+                    await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                    receiver.answer = badAnswer;
+                    client.send(getFlags(50));
+                    await receiver.waitForFlagsTotal(50);
+
+                    receiver.answer = accept;
+                    receiver.wipe();
+                    await receiver.waitForFlagsTotal(50);
+                    assert.equal(accepted, 50);
+                });
+
+                it("resend after reconnect", async () => {
+                    flagger = new Flagger(flaggerConfig);
+                    await flagger.start();
+                    await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+
+                    receiver.answer = badAnswer;
+                    client.send(getFlags(50));
+                    await receiver.waitForFlagsTotal(50);
+                    await receiver.stop();
+
+                    receiver.answer = accept;
+                    receiver.wipe();
+                    receiver.start();
+                    await receiver.waitForFlagsTotal(50);
+                    assert.equal(accepted, 50);
+                });
+            });
         });
 
         describe("TCP Commands", () => {
@@ -537,6 +695,88 @@ describe("Flagger", function () {
                     assert.equal(receiver.flags.size, 100);
                     assert.equal(client.answers.size, 100);
                 });
+            });
+        });
+
+        describe("Socket.IO", () => {
+            let ioClient;
+
+            beforeEach(() => {
+                ioClient = new IOClient();
+            });
+
+            afterEach(async () => {
+                await ioClient.disconnect();
+            });
+
+            it("flags", async () => {
+                flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                await flagger.start();
+                await ioClient.connect({ port: DEFAULT_FLAGGER_CONFIG.ioServer.port });
+
+                ioClient.send(getFlags(100));
+                await receiver.waitForFlagsTotal(100);
+            });
+
+            it("get_last_flags", async () => {
+                flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                await flagger.start();
+                await ioClient.connect({ port: DEFAULT_FLAGGER_CONFIG.ioServer.port });
+
+                ioClient.send(getFlags(50));
+                await receiver.waitForFlagsTotal(50);
+
+                receiver.answer = null;
+                ioClient.send(getFlags(50));
+                await receiver.waitForFlagsTotal(100);
+
+                const flags = await ioClient.send({command: "get_last_flags"});
+                let [sent, answered] = [0, 0];
+                flags.forEach(x => x.status === "SENT" ? sent++ : answered++);
+                assert.equal(sent, 50);
+                assert.equal(answered, 50);
+            });
+
+            it("update", async () => {
+                const getUpdate = () => {
+                    return new Promise((resolve) => {
+                        ioClient.socket.once("update", flags => {
+                            resolve(flags[0]);
+                        });
+                    });
+                };
+
+                flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);
+                await flagger.start();
+                await receiver.stop();
+                await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
+                await ioClient.connect({ port: DEFAULT_FLAGGER_CONFIG.ioServer.port });
+
+                client.send(getFlags(1));
+                let f = await getUpdate();
+                assert.equal(f.status, "UNSENT");
+
+                receiver.answer = null;
+                receiver.start();
+                f = await getUpdate();
+                assert.equal(f.status, "SENT");
+                assert.equal(f.expired, false);
+                await receiver.waitForFlagsTotal(1);
+
+                client.send("drop\n");
+                f = await getUpdate();
+                assert.equal(f.status, "SENT");
+                assert.equal(f.expired, true);
+
+                client.send(getFlags(1));
+                f = await getUpdate();
+                assert.equal(f.status, "UNSENT");
+                f = await getUpdate();
+                assert.equal(f.status, "SENT");
+                [...receiver.clients.keys()][0].write("Cool flag!\n");
+                f = await getUpdate();
+                assert.equal(f.status, "ANSWERED");
+                assert.equal(f.answer, "Cool flag!");
             });
         });
     });
@@ -605,7 +845,7 @@ describe("Flagger", function () {
             await flagger.stop();
         });
 
-        const FLAGS_PER_SECOND = 500;
+        const FLAGS_PER_SECOND = 1000;
         const ROUNDS = 5;
 
         it(`${FLAGS_PER_SECOND} flags per second`, async () => {

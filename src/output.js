@@ -19,6 +19,7 @@ class Output extends EventEmitter
         this.maxFlagsPerSend = options.maxFlagsPerSend > 0 ? options.maxFlagsPerSend : Number.MAX_SAFE_INTEGER;
         this.lastRound = null;
         this.flagLifetime = options.flagLifetime;
+        this.resendTimeout = options.resendTimeout;
 
         this.socket = new net.Socket;
         this.status = "NONE";
@@ -63,18 +64,35 @@ class Output extends EventEmitter
             let last = datas.pop();
 
             let answers = [];
+            let badAnswered = [];
 
             for (let i = 0; i < datas.length; i++) {
                 if (this.receiverMessages.greetings.includes(datas[i])) {
                     this.logger.debug("OUTPUT: Greetings skipped");
                 } else if (this.sentQueue.length > 0) {
-                    answers.push([this.sentQueue.shift(), datas[i]]);
+                    const flag = this.sentQueue.shift();
+                    const answer = datas[i];
+
+                    if (flag.answer !== answer) {
+                        answers.push([flag, answer]);
+                        if (this.receiverMessages.badAnswers.includes(answer)) {
+                            badAnswered.push(flag);
+                        }
+                    }
                 } else {
                     this.logger.warning(`OUTPUT: Received data not related to any flag: ${datas[i]}`);
                 }
             }
 
-            this.emit("answers", answers);
+            if (answers.length > 0) {
+                this.emit("answers", answers);
+            }
+
+            if (badAnswered.length > 0) {
+                setTimeout(() => {
+                    this.putInQueue(badAnswered);
+                }, this.resendTimeout)
+            }
 
             if (last.length > 0) {
                 this.inputBuffer += last;
@@ -189,10 +207,14 @@ class Output extends EventEmitter
         for (let i = 0; i < flags.length; i++) {
             const flag = flags[i];
 
-            if (flag.expired || (now - flag.date > this.flagLifetime) || (this.lastRound && flag.date < this.lastRound)) {
-                expired.push(flag)
+            if (flag.expired) {
+                continue;
             } else {
-                nonExpired.push(flag);
+                if ((now - flag.date > this.flagLifetime) || (this.lastRound && flag.date < this.lastRound)) {
+                    expired.push(flag)
+                } else {
+                    nonExpired.push(flag);
+                }
             }
         }
 

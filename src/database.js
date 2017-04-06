@@ -104,10 +104,14 @@ class Database
         });
     }
 
-    updateFlags(flags){
+    updateFlags(flags, updatedFields=null){
         if (flags.length === 0) {
             this.logger.error("DATABASE: Empty 'flags' array sent to update");
             return Promise.resolve();
+        }
+
+        if (updatedFields !== null) {
+            return this.updateFlagsByGroups(flags, updatedFields);
         }
 
         return new Promise((resolve) => {
@@ -117,6 +121,55 @@ class Database
                         filter: { flag: x.flag },
                         update: {
                             $set: x.toObject()
+                        }
+                    }
+                }
+            });
+
+            this.flagsCollection.bulkWrite(operands, { ordered: false }, (error, r) => {
+                // console.log(`UPDATE ${flags.length} FLAGS = DONE`);
+                if (error) {
+                    this.logger.error(`DATABASE: Flags update error:\n`, error);
+                }
+                resolve();
+            });
+        });
+    }
+
+    updateFlagsByGroups(flags, updatedFields) {
+        const groups = new Map();
+
+        for (let i = 0; i < flags.length; i++) {
+            const flag = flags[i];
+
+            const hash = updatedFields.map((field) => {
+                return flag[field];
+            }).join(":");
+
+            if (!groups.has(hash)) {
+                groups.set(hash, {
+                    model: flag,
+                    flags: [flag.flag]
+                });
+            } else {
+                groups.get(hash).flags.push(flag.flag);
+            }
+        }
+
+        return new Promise((resolve) => {
+            const operands = [...groups.keys()].map((hash) => {
+                const group = groups.get(hash);
+
+                const changes = {};
+                for (const field of updatedFields) {
+                    changes[field] = group.model[field];
+                }
+
+                return {
+                    updateMany: {
+                        filter: { flag: { $in: group.flags } },
+                        update: {
+                            $set: changes
                         }
                     }
                 }

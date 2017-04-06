@@ -12,7 +12,7 @@ import Flag from "./flag"
 
 export default class Flagger
 {
-    constructor(options){
+    constructor(options) {
         this.options = options;
         this.logger = options.logger || new Logger();
         this.state = "new";
@@ -42,16 +42,21 @@ export default class Flagger
         this.output = new Output(Object.assign(options.output, {
             logger: options.logger,
             receiverMessages: options.receiverMessages,
+            resendTimeout: options.resendTimeout,
             flagLifetime: options.flagLifetime
         }));
 
 
-        this.output.on("answers", (answers) => {
+        this.output.on("answers", (answers, bad) => {
             let updatedFlags = [];
 
             for (let i = 0; i < answers.length; i++) {
                 const [flag, answer] = answers[i];
-                flag.status = "ANSWERED";
+                if (options.receiverMessages.badAnswers.includes(answer)) {
+                    flag.status = "BAD_ANSWERED";
+                } else {
+                    flag.status = "ANSWERED";
+                }
                 flag.answer = answer;
                 updatedFlags.push(flag);
 
@@ -59,7 +64,7 @@ export default class Flagger
                 this.logger.info(`Answer: ${flag} ${flag.answer}`);
             }
 
-            const p = this.database.updateFlags(updatedFlags).then(() => {
+            const p = this.database.updateFlags(updatedFlags, ["status", "answer"]).then(() => {
                 this.logger.trace(`${answers.length} answers writed to DB`);
                 this.emitUpdate(updatedFlags);
             }).catch((error) => {
@@ -76,14 +81,14 @@ export default class Flagger
             for (let i = 0; i < flags.length; i++) {
                 const flag = flags[i];
 
-                if (flag.status === "UNSENT"){
+                if (flag.status === "UNSENT") {
                     flag.status = "SENT";
                     updatedFlags.push(flag);
                 }
             }
 
-            if (updatedFlags.length > 0){
-                const p = this.database.updateFlags(updatedFlags).then(() => {
+            if (updatedFlags.length > 0) {
+                const p = this.database.updateFlags(updatedFlags, ["status"]).then(() => {
                     this.emitUpdate(updatedFlags);
                 }).catch((error) => {
                     this.logger.error("Error while write sent flags to DB:\n", error);
@@ -100,7 +105,7 @@ export default class Flagger
                 this.logger.info(`OUTPUT: Flag expired: ${flags[i]}`);
             }
 
-            const p = this.database.updateFlags(flags).then(() => {
+            const p = this.database.updateFlags(flags, ["expired"]).then(() => {
                 this.emitUpdate(flags);
             }).catch((error) => {
                 this.logger.error("Error while write expired flags to DB:\n", error);
@@ -126,7 +131,7 @@ export default class Flagger
                 data = inputBuffer + data.toString();
 
                 let flags = data.match(options.flagRegexp);
-                if (flags && flags.length > 0){
+                if (flags && flags.length > 0) {
                     for (let i = 0; i < flags.length; i++) {
                         this.logger.info(`TCP: Flag from ${socket.remoteAddress}: ${flags[i]}`);
                     }
@@ -144,12 +149,12 @@ export default class Flagger
                 let lines = data.split("\n");
                 const last = lines.pop();
 
-                if (lines.includes("stats") || lines.includes("status")){
+                if (lines.includes("stats") || lines.includes("status")) {
                     socket.write(`Output status: ${this.output.status}\n`);
                     socket.write("Database statistics:\n");
 
                     const p = this.database.getStatistics().then(dbStats => {
-                        if (socket.writable){
+                        if (socket.writable) {
                             for (let s in dbStats) {
                                 socket.write(`\t${s}: ${dbStats[s]}\n`);
                             }
@@ -160,7 +165,7 @@ export default class Flagger
 
                     this.processings.add(p);
                     p.then(() => this.processings.delete(p));
-                } else if (lines.includes("drop")){
+                } else if (lines.includes("drop")) {
                     socket.write("Drop all flags as expired!\n");
                     this.output.dead();
                     this.output.emit("expired", this.output.waitingQueue);
@@ -200,8 +205,12 @@ export default class Flagger
             });
 
             client.on("command", async (msg, callback) => {
-                if (msg){
-                    if (msg.command === "get_last_flags"){
+                if (typeof callback != "function") {
+                    callback = () => {};
+                }
+
+                if (msg) {
+                    if (msg.command === "get_last_flags") {
                         const p = this.database.getLastFlagsRaw(msg.count).catch((error) => {
                             this.logger.error(`Error while fetching ${msg.count} last flags from DB:\n`, error);
                         });
@@ -210,9 +219,9 @@ export default class Flagger
                         p.then(() => this.processings.delete(p));
 
                         callback(await p);
-                    } else if (msg.command === "flags"){
+                    } else if (msg.command === "flags") {
                         let flags = msg.data.toString().match(options.flagRegexp);
-                        if (flags && flags.length > 0){
+                        if (flags && flags.length > 0) {
                             for (let i = 0; i < flags.length; i++) {
                                 this.logger.info(`SocketIO: Flag from ${address}: ${flags[i]}`);
                             }
@@ -231,7 +240,7 @@ export default class Flagger
         });
 
         const unanswered = await this.database.getUnansweredFlags();
-        if (unanswered.length > 0){
+        if (unanswered.length > 0) {
             this.logger.debug(`Restore ${unanswered.length} unfinished flags from DB:`, unanswered);
             this.output.putInQueue(unanswered);
         }
@@ -265,7 +274,7 @@ export default class Flagger
         });
     }
 
-    emitUpdate(flags){
+    emitUpdate(flags) {
         if (!Array.isArray(flags)) {
             flags = [flags];
         }
@@ -275,7 +284,7 @@ export default class Flagger
         });
     }
 
-    async processNewFlags(flags, socket = undefined){
+    async processNewFlags(flags, socket = undefined) {
         let newFlagsSet = new Set(flags);
 
         const oldFlags = await this.database.findFlags(flags);
@@ -324,13 +333,17 @@ export default class Flagger
             ioClient.disconnect(true);
         }
         this.httpServer.close();
+        this.httpServer.removeAllListeners();
+        this.ioServer.removeAllListeners();
 
         for (let tcpClient of this.tcpClients) {
             tcpClient.destroy();
         }
         this.tcpServer.close();
+        this.tcpServer.removeAllListeners();
 
         this.output.stop();
+        this.output.removeAllListeners();
 
         await Promise.all([...this.processings.keys()]);
         await this.database.close();
@@ -350,6 +363,7 @@ if (require.main === module) {
                 reconnectTimeout: config.RECONNECT_TIMEOUT,
                 sendPeriod: config.SEND_PERIOD,
                 maxFlagsPerSend: config.MAX_FLAGS_PER_SEND,
+                resendTimeout: config.RESEND_TIMEOUT
             },
             flagLifetime: config.MAX_FLAG_LIFETIME,
             receiverMessages: config.RECEIVER_MESAGES,

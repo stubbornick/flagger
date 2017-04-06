@@ -2,18 +2,20 @@
 
 export default {
     // Output
-    FLAG_SERVICE_HOST: "test_receiver.ctf",
-    FLAG_SERVICE_PORT: 6666,
+    FLAG_SERVICE_HOST: "flags.ructfe.org",
+    FLAG_SERVICE_PORT: 31337,
     RECONNECT_TIMEOUT: 1000,
     SEND_PERIOD: 5000,       // 0 for immediate sending
     // SEND_PERIOD: 0,       // 0 for immediate sending
     MAX_FLAGS_PER_SEND: 15,  // standart internet MTU = 576. So optimal flags in pack: 576/32; null or 0 for unlimited
     // MAX_FLAGS_PER_SEND: 500,
+    RESEND_TIMEOUT: 1000,
 
     // Receiver messages
     RECEIVER_MESAGES: {
         greetings: ["Enter your flags, finished with newline (or empty line to exit)"],
-        accepted: /Accepted[\w\W]*/
+        accepted: /Accepted[\w\W]*/,
+        badAnswers: ["Service is down"]
     },
 
     // Input

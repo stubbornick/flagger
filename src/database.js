@@ -114,6 +114,8 @@ class Database
             return this.updateFlagsByGroups(flags, updatedFields);
         }
 
+        this.logger.warnint("DATABASE: Unoptimized version of updateFlags called");
+
         return new Promise((resolve) => {
             const operands = flags.map((x) => {
                 return {

@@ -1,6 +1,6 @@
 {
   "name": "flagger",
-  "version": "0.0.1",
+  "version": "1.1",
   "description": "Flag sender",
   "main": "index.js",
   "scripts": {

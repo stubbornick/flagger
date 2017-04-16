@@ -513,7 +513,7 @@ describe("Flagger", function () {
             await Promise.all([s, receiver.waitForAnyConnection()]);
             await client.connect({ port: DEFAULT_FLAGGER_CONFIG.tcpServer.port });
             await flagger.stop();
-        })
+        });
 
         it("simple", async () => {
             flagger = new Flagger(DEFAULT_FLAGGER_CONFIG);

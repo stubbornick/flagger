@@ -245,7 +245,7 @@ export default class Flagger
             this.output.putInQueue(unanswered);
         }
 
-        await Promise.all([new Promise((resolve) => {
+        await Promise.all([new Promise((resolve, reject) => {
             this.tcpServer.listen({
                 host: options.tcpServer.host,
                 port: options.tcpServer.port,
@@ -258,7 +258,7 @@ export default class Flagger
                     resolve();
                 }
             });
-        }), new Promise((resolve) => {
+        }), new Promise((resolve, reject) => {
             this.httpServer.listen({
                 port: options.ioServer.port,
                 host: options.ioServer.host
@@ -322,21 +322,21 @@ export default class Flagger
 
     async stop() {
         if (this.state !== "run") {
-            this.logger.warning(`Trying to stop flagger in '${this.state}' state`);
+            this.logger.warning(`Trying to stop Flagger in '${this.state}' state`);
             return;
         }
 
         this.state = "stopping";
         this.logger.info("Flagger stopping");
 
-        for (let ioClient of this.ioClients) {
-            ioClient.disconnect(true);
-        }
-        this.httpServer.close();
+        // for (const ioClient of this.ioClients) {
+        //     ioClient.disconnect(true);
+        // }
+        // this.httpServer.close();
         this.httpServer.removeAllListeners();
         this.ioServer.removeAllListeners();
 
-        for (let tcpClient of this.tcpClients) {
+        for (const tcpClient of this.tcpClients) {
             tcpClient.destroy();
         }
         this.tcpServer.close();
@@ -388,12 +388,12 @@ if (require.main === module) {
             });
         };
 
-        process.on('SIGINT', () => {
+        process.on("SIGINT", () => {
             console.log("Caught SIGINT signal");
             gracefulStop();
         });
 
-        process.on('SIGTERM', () => {
+        process.on("SIGTERM", () => {
             console.log("Caught SIGTERM signal");
             gracefulStop();
         });

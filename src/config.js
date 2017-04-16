@@ -2,7 +2,7 @@
 
 export default {
     // Output
-    FLAG_SERVICE_HOST: "flags.ructfe.org",
+    FLAG_SERVICE_HOST: "10.60.200.1",
     FLAG_SERVICE_PORT: 31337,
     RECONNECT_TIMEOUT: 1000,
     SEND_PERIOD: 5000,       // 0 for immediate sending

@@ -1,11 +1,11 @@
 {
   "name": "flagger",
-  "version": "1.1",
+  "version": "1.1.0",
   "description": "Flag sender",
   "main": "index.js",
   "scripts": {
     "start": "node lib/index.js",
-    "deploy": "npm run build && rsync -ruvt --exclude 'node_modules' . flagger@flagger.ctf:app",
+    "deploy": "npm run build && rsync -ruvt --delete --exclude 'node_modules' --exclude '.git' . flagger@flagger.ctf:app",
     "build": "gulp build",
     "watch": "gulp watch",
     "test": "mocha -b --require source-map-support/register tests/index.js",

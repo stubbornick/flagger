@@ -5,14 +5,14 @@ import Flag from "./flag";
 
 class Database
 {
-    constructor({ logger = null, acceptedAnswer = "Accepted" }){
+    constructor({ logger = null, acceptedAnswer = "Accepted" }) {
         this.logger = logger;
         this.acceptedAnswer = acceptedAnswer;
         this.db = null;
         this.connection = false;
     }
 
-    async open(url){
+    async open(url) {
         if (this.db || this.connection) {
             throw new Erorr("Database opened twice");
         }
@@ -21,7 +21,7 @@ class Database
 
         this.db = await new Promise((resolve, reject) => {
             new MongoClient.connect(url, (error, db) => {
-                if (error){
+                if (error) {
                     reject(error);
                 } else {
                     this.logger.info("DATABASE: Connected to MongoDB");
@@ -38,23 +38,23 @@ class Database
         await this.addIndex({ answer: 1 });
     }
 
-    addIndex(fields, options=null){
+    addIndex(fields, options=null) {
         return this.flagsCollection.createIndex(fields, options);
     }
 
-    findFlags(flags){
+    findFlags(flags) {
         if (!Array.isArray(flags)) {
             flags = [flags];
         }
 
         return new Promise((resolve) => {
             this.flagsCollection.find({ flag: { $in: flags } }).toArray((error, flags) => {
-                if (error){
+                if (error) {
                     this.logger.error(`DATABASE: Flag search error:\n`, error);
                     resolve(null);
                 }
 
-                if (flags){
+                if (flags) {
                     resolve(flags.map(x => new Flag(x)));
                 } else {
                     resolve([]);
@@ -63,14 +63,14 @@ class Database
         });
     }
 
-    addFlags(flags){
+    addFlags(flags) {
         return new Promise((resolve, reject) => {
-            if (flags.length === 0){
+            if (flags.length === 0) {
                 resolve();
             }
 
             let flagsObjects = new Array;
-            for (let i=0; i<flags.length; ++i){
+            for (let i=0; i<flags.length; ++i) {
                 flagsObjects.push(flags[i].toObject());
             }
 
@@ -83,7 +83,7 @@ class Database
         });
     }
 
-    getUnansweredFlags(){
+    getUnansweredFlags() {
         return new Promise((resolve) => {
             this.flagsCollection.find({
                 status: {
@@ -104,7 +104,7 @@ class Database
         });
     }
 
-    updateFlags(flags, updatedFields=null){
+    updateFlags(flags, updatedFields=null) {
         if (flags.length === 0) {
             this.logger.error("DATABASE: Empty 'flags' array sent to update");
             return Promise.resolve();
@@ -187,11 +187,11 @@ class Database
         });
     }
 
-    getCount(params){
+    getCount(params) {
         return this.flagsCollection.count(params);
     }
 
-    getStatistics(){
+    getStatistics() {
         return new Promise((resolve, reject) => {
             Promise.all([
                 this.getCount({ }),
@@ -213,10 +213,10 @@ class Database
         });
     }
 
-    getLastFlagsRaw(count = 100){
+    getLastFlagsRaw(count = 100) {
         return new Promise((resolve) => {
             this.flagsCollection.find({ }).sort({ date: -1 }).limit(count).toArray((error, flags) => {
-                if (error){
+                if (error) {
                     this.logger.error(`DATABASE: Last flags fetching error:\n`, error);
                     resolve([]);
                     return;

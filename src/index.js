@@ -46,13 +46,12 @@ export default class Flagger
             flagLifetime: options.flagLifetime
         }));
 
-
         this.output.on("answers", (answers, bad) => {
             let updatedFlags = [];
 
             for (let i = 0; i < answers.length; i++) {
-                const [flag, answer] = answers[i];
-                if (options.receiverMessages.badAnswers.includes(answer)) {
+                const [flag, answer, bad] = answers[i];
+                if (bad) {
                     flag.status = "BAD_ANSWERED";
                 } else {
                     flag.status = "ANSWERED";
@@ -191,8 +190,18 @@ export default class Flagger
 
 
         this.httpServer = http.createServer();
+        this.httpClients = new Set();
         this.ioServer = new IOServer(this.httpServer);
         this.ioClients = new Set();
+
+        this.httpServer.on("connection", (socket) => {
+            this.httpClients.add(socket);
+
+            socket.on("close", () => {
+                this.httpClients.delete(socket);
+                this.logger.trace(`HTTP: ${socket.remoteAddress} disconnected`);
+            });
+        });
 
         this.ioServer.on("connection", (client) => {
             const address = `${client.request.connection.remoteAddress}:${client.request.connection.remotePort}`;
@@ -329,12 +338,13 @@ export default class Flagger
         this.state = "stopping";
         this.logger.info("Flagger stopping");
 
-        // for (const ioClient of this.ioClients) {
-        //     ioClient.disconnect(true);
-        // }
-        // this.httpServer.close();
-        this.httpServer.removeAllListeners();
         this.ioServer.removeAllListeners();
+
+        for (const httpClient of this.httpClients) {
+            httpClient.destroy();
+        }
+        this.httpServer.close();
+        this.httpServer.removeAllListeners();
 
         for (const tcpClient of this.tcpClients) {
             tcpClient.destroy();

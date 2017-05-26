@@ -72,12 +72,18 @@ class Output extends EventEmitter
                 } else if (this.sentQueue.length > 0) {
                     const flag = this.sentQueue.shift();
                     const answer = datas[i];
+                    const bad = this.receiverMessages.badAnswers.some(badAnswer => answer.includes(badAnswer));
 
                     if (flag.answer !== answer) {
-                        answers.push([flag, answer]);
-                        if (this.receiverMessages.badAnswers.includes(answer)) {
-                            badAnswered.push(flag);
+                        if (bad) {
+                            answers.push([flag, answer, true]);
+                        } else {
+                            answers.push([flag, answer, false]);
                         }
+                    }
+
+                    if (bad) {
+                        badAnswered.push(flag);
                     }
                 } else {
                     this.logger.warning(`OUTPUT: Received data not related to any flag: ${datas[i]}`);

@@ -15,7 +15,7 @@ export default {
     RECEIVER_MESAGES: {
         greetings: ["Enter your flags, finished with newline (or empty line to exit)"],
         accepted: /Accepted[\w\W]*/,
-        badAnswers: ["Service is down"]
+        badAnswers: ["Please try again later", "No such flag"]
     },
 
     // Input
@@ -31,8 +31,8 @@ export default {
 
     // Logging
     logging: {
-        logfile: null,
-        printDate: false,
+        logfile: "flagger.log",
+        printDate: true,
         overrideError: true,
     }
 };

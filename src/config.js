@@ -31,7 +31,7 @@ export default {
 
     // Logging
     logging: {
-        logfile: "flagger.log",
+        logfile: "logs/flagger.log",
         printDate: true,
         overrideError: true,
     }

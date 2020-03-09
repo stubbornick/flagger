@@ -16,7 +16,8 @@ const defaultConfig = require("../lib/config").default;
 const MONGODB_URL = defaultConfig.FLAGS_DATABASE + "-test";
 const RECEIVER_PORT = 6666;
 const FLAG_REGEXP = /[\w]{31}=/;
-const LOGFILE = "tests.log";
+const LOGFILE = "logs/tests.log";
+const CLIENT_LOGFILE = "logs/client.log"
 
 const logger = new Logger({ logfile: LOGFILE, printDate: true, consolePrint: false });
 
@@ -252,7 +253,7 @@ class Client extends EventEmitter {
                     let inputBuffer = "";
 
                     this.socket.on("data", (data) => {
-                        fs.appendFile("client.log", "RAW: "+data.toString()+"\n", (e) => e && console.error(e));
+                        fs.appendFile(CLIENT_LOGFILE, "RAW: "+data.toString()+"\n", (e) => e && console.error(e));
                         data = inputBuffer + data.toString();
 
                         const lines = data.split("\n");
@@ -265,7 +266,7 @@ class Client extends EventEmitter {
                             if (line.includes("Answer:") || line.includes("already in DB")) {
                                 this.answers.add(line);
                                 this.emit("answer", line);
-                                fs.appendFile("client.log", "ANS: "+line+"\n", (e) => e && console.error(e));
+                                fs.appendFile(CLIENT_LOGFILE, "ANS: "+line+"\n", (e) => e && console.error(e));
                             }
                         }
 
@@ -447,7 +448,7 @@ describe("Flagger", function () {
             // swallow
         }
         try {
-            fs.unlinkSync("client.log");
+            fs.unlinkSync(CLIENT_LOGFILE);
         } catch(e) {
             // swallow
         }
@@ -473,7 +474,7 @@ describe("Flagger", function () {
             `\tCLIENT: ${client.answers.size} answers\n` +
             `\tCLIENT: ${client.answers.size} lines`;
         logger.info(msg);
-        fs.appendFile("client.log", msg+"\n", (e) => e && console.error(e));
+        fs.appendFile(CLIENT_LOGFILE, msg+"\n", (e) => e && console.error(e));
     });
 
     describe("Unit-tests", () => {

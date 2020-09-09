@@ -8,29 +8,18 @@ class Database
     constructor({ logger = null, acceptedAnswer = "Accepted" }) {
         this.logger = logger;
         this.acceptedAnswer = acceptedAnswer;
-        this.db = null;
-        this.connection = false;
+        this.client = null;
     }
 
-    async open(url) {
-        if (this.db || this.connection) {
+    async open(url, databaseName) {
+        if (this.client) {
             throw new Erorr("Database opened twice");
         }
 
-        this.connection = true;
+        this.client = await MongoClient.connect(url);
+        this.flagsCollection = this.client.db(databaseName).collection("flags");
 
-        this.db = await new Promise((resolve, reject) => {
-            new MongoClient.connect(url, (error, db) => {
-                if (error) {
-                    reject(error);
-                } else {
-                    this.logger.info("DATABASE: Connected to MongoDB");
-                    resolve(db);
-                }
-            });
-        });
-
-        this.flagsCollection = this.db.collection("flags");
+        this.logger.info("DATABASE: Connected to MongoDB");
 
         await this.addIndex({ flag: 1 }, { unique: true });
         await this.addIndex({ status: 1 });
@@ -228,9 +217,8 @@ class Database
     }
 
     async close() {
-        await this.db.close();
-        this.connection = false;
-        this.db = null;
+        await this.client.close();
+        this.client = null;
         this.logger.info("DATABASE: Connection to MongoDB closed");
     }
 }

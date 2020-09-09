@@ -26,7 +26,8 @@ export default {
     IO_SERVER_PORT: 31336,
 
     // Store
-    FLAGS_DATABASE: "mongodb://127.0.0.1:27017/flagger",
+    MONGODB_URL: "mongodb://127.0.0.1:27017/",
+    MONGODB_DATABASE: "flagger",
     MAX_FLAG_LIFETIME: 1000*60*10,  // 1000*60*10 = 5 minutes
 
     // Logging

@@ -13,7 +13,7 @@ const Flagger = require("../lib").default;
 const Logger = require("../lib/log").default;
 const defaultConfig = require("../lib/config").default;
 
-const MONGODB_URL = defaultConfig.FLAGS_DATABASE + "-test";
+const MONGODB_DATABASE = defaultConfig.MONGODB_DATABASE + "-test";
 const RECEIVER_PORT = 6666;
 const FLAG_REGEXP = /[\w]{31}=/;
 const LOGFILE = "logs/tests.log";
@@ -41,7 +41,8 @@ const DEFAULT_FLAGGER_CONFIG = {
     },
     logger,
     flagRegexp: FLAG_REGEXP,
-    flagsDatabase: MONGODB_URL
+    mongoDbUrl: defaultConfig.MONGODB_URL,
+    mongoDbDatabase: MONGODB_DATABASE,
 };
 
 const delay = (t) => new Promise((resolve) => setTimeout(resolve, t));
@@ -436,9 +437,10 @@ describe("Flagger", function () {
     this.timeout(5000);
 
     const cleanDatabase = async () => {
-        const db = await new MongoClient.connect(MONGODB_URL);
-        await db.dropDatabase();
-        await db.close();
+        const client = new MongoClient(DEFAULT_FLAGGER_CONFIG.mongoDbUrl);
+        await client.connect();
+        await client.db(DEFAULT_FLAGGER_CONFIG.mongoDbDatabase).dropDatabase();
+        await client.close();
     };
 
     before(() => {

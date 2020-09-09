@@ -19,9 +19,7 @@ function build() {
         .pipe(sourcemaps.init())
         .pipe(cache("src"))
         .pipe(babel({
-            only: /\.js$/,
             plugins: [
-                "transform-async-to-generator",
                 "transform-es2015-modules-commonjs"
             ]
         }))

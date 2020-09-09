@@ -37,7 +37,7 @@ export default class Flagger
             acceptedAnswer: options.receiverMessages.accepted,
         });
 
-        await this.database.open(options.flagsDatabase);
+        await this.database.open(options.mongoDbUrl, options.mongoDbDatabase);
 
         this.output = new Output(Object.assign(options.output, {
             logger: options.logger,
@@ -387,7 +387,8 @@ if (require.main === module) {
             },
             logger,
             flagRegexp: config.FLAG_REGEXP,
-            flagsDatabase: config.FLAGS_DATABASE,
+            mongoDbUrl: config.MONGODB_URL,
+            mongoDbDatabase: config.MONGODB_DATABASE,
         });
 
         const gracefulStop = () => {

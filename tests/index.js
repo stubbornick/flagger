@@ -5,7 +5,7 @@ const { assert } = chai;
 const net = require("net");
 const EventEmitter = require("events");
 const fs = require("fs");
-const defaultsDeep = require("defaults-deep");
+const defaultsDeep = require("deep-defaults");
 const { MongoClient } = require("mongodb");
 const SocketIOClient = require("socket.io-client");
 

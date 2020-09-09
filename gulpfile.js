@@ -30,10 +30,10 @@ function build() {
         .pipe(gulp.dest("lib"));
 }
 
-gulp.task("build", ["clean"], build);
+gulp.task("build", gulp.series("clean", build));
 
-gulp.task("default", ["build"]);
+gulp.task("default", gulp.series("build"));
 
-gulp.task("watch", ["build"], () => {
+gulp.task("watch", gulp.series("build", () => {
     gulp.watch("src/**/*", build);
-});
+}));
